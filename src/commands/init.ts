@@ -27,15 +27,52 @@ async function getAvailableSkills(skillsDir: string): Promise<SkillMetadata[]> {
       if (!dirent.isDirectory()) continue;
       
       const skillPath = join(skillsDir, dirent.name);
-      const metadataPath = join(skillPath, 'skill.json');
+      const skillMdPath = join(skillPath, 'SKILL.md');
       
-      if (await exists(metadataPath)) {
+      if (await exists(skillMdPath)) {
         try {
-          const metadataContent = await readFile(metadataPath, 'utf-8');
-          const metadata: SkillMetadata = JSON.parse(metadataContent);
-          skills.push(metadata);
+          const skillContent = await readFile(skillMdPath, 'utf-8');
+          
+          // 解析YAML front matter
+          const yamlMatch = skillContent.match(/^---\n([\s\S]*?)\n---/);
+          if (yamlMatch) {
+            const yamlContent = yamlMatch[1];
+            
+            // 简单的YAML解析（仅支持基本的key: value格式）
+            const metadata: SkillMetadata = {
+              name: dirent.name,
+              description: '',
+              version: '1.0.0',
+              author: '',
+              tags: [],
+              aiTypes: ['all'], // 默认支持所有AI类型
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            
+            const lines = yamlContent.split('\n');
+            for (const line of lines) {
+              const match = line.match(/^(\w+):\s*(.+)$/);
+              if (match) {
+                const [, key, value] = match;
+                if (key === 'name') metadata.name = value.replace(/['"]/g, '');
+                if (key === 'description') metadata.description = value.replace(/['"]/g, '');
+                if (key === 'version') metadata.version = value.replace(/['"]/g, '');
+                if (key === 'author') metadata.author = value.replace(/['"]/g, '');
+                if (key === 'tags') {
+                  // 解析数组格式 ["tag1", "tag2"]
+                  const tagsMatch = value.match(/\[(.*)\]/);
+                  if (tagsMatch) {
+                    metadata.tags = tagsMatch[1].split(',').map(t => t.trim().replace(/['"]/g, ''));
+                  }
+                }
+              }
+            }
+            
+            skills.push(metadata);
+          }
         } catch {
-          // 跳过无效的skill.json
+          // 跳过无效的SKILL.md
         }
       }
     }
@@ -96,9 +133,9 @@ async function installSkillToFolder(
   aiType: Exclude<AIType, 'all'>,
   force?: boolean
 ): Promise<SkillInstallResult | null> {
-  const promptPath = join(skillSourceDir, 'prompt.md');
+  const skillMdPath = join(skillSourceDir, 'SKILL.md');
   
-  if (!(await exists(promptPath))) {
+  if (!(await exists(skillMdPath))) {
     return null;
   }
   
@@ -176,9 +213,14 @@ async function installSkillToFolder(
     return null; // 跳过已存在的文件
   }
   
-  // 复制prompt.md到目标位置
-  const promptContent = await readFile(promptPath, 'utf-8');
-  await writeFile(targetFileName, promptContent);
+  // 读取SKILL.md内容
+  const skillContent = await readFile(skillMdPath, 'utf-8');
+  
+  // 提取Markdown内容（去掉YAML front matter）
+  const markdownContent = skillContent.replace(/^---\n[\s\S]*?\n---\n/, '');
+  
+  // 写入目标文件
+  await writeFile(targetFileName, markdownContent);
   
   return {
     name: skill.name,

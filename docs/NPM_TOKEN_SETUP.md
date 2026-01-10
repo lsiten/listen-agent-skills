@@ -9,22 +9,48 @@
 npm login
 ```
 
-### 2. 创建 Automation Token
-**重要**: 新版本的 npm 需要指定 token 名称
+### 2. 创建 Granular Access Token (推荐)
+**重要**: 新版本的 npm 需要指定 token 名称，且发布包需要 granular access token
 
 ```bash
-# 创建自动化 token（推荐用于 CI/CD）
-npm token create --name="listen-agent-github-actions" --type=automation
+# 方法1: 创建 granular access token（推荐，支持绕过2FA）
+# 注意: granular token 需要通过 npm 网站创建，不能通过命令行
+echo "请访问 https://www.npmjs.com/settings/tokens 创建 granular access token"
 
-# 或者创建只读 token（如果只需要读取权限）
-npm token create --name="listen-agent-readonly" --type=readonly
+# 方法2: 创建传统 automation token（需要配置2FA）
+npm token create --name="listen-agent-github-actions" --type=automation
 
 # 查看现有 tokens
 npm token list
 ```
 
+### 2.1 通过网站创建 Granular Access Token（推荐）
+
+1. **访问 NPM Token 页面**
+   - 打开 https://www.npmjs.com/settings/tokens
+   - 点击 "Generate New Token"
+
+2. **选择 Token 类型**
+   - 选择 "Granular Access Token"
+   - 设置 Token 名称: `listen-agent-github-actions`
+
+3. **配置权限**
+   - **Expiration**: 设置合适的过期时间（建议1年）
+   - **Packages and scopes**: 选择 "Selected packages"
+   - **Package**: 添加 `listen-agent`
+   - **Permissions**: 选择 "Read and write"
+
+4. **高级设置**
+   - ✅ 勾选 "Bypass 2FA requirement" （重要！）
+   - 这样 GitHub Actions 就不需要 2FA 验证
+
+5. **生成并复制 Token**
+   - 点击 "Generate Token"
+   - 复制生成的 token（以 `npm_` 开头）
+
 ### 3. Token 类型说明
-- **automation**: 适用于 CI/CD 环境，可以发布包
+- **granular**: 新型细粒度权限 token，支持绕过 2FA（推荐用于 CI/CD）
+- **automation**: 传统自动化 token，需要配置 2FA
 - **readonly**: 只读权限，不能发布
 - **publish**: 可以发布，但有 IP 限制
 
@@ -71,6 +97,24 @@ curl -H "Authorization: Bearer YOUR_TOKEN" https://registry.npmjs.org/-/whoami
    ```
 
 ## 🔍 常见问题
+
+### Q: 发布时提示 "Two-factor authentication or granular access token with bypass 2fa enabled is required"
+**A**: 这是因为 NPM 要求发布包时使用 2FA 或 granular access token。解决方案：
+
+**方案1: 使用 Granular Access Token（推荐）**
+1. 访问 https://www.npmjs.com/settings/tokens
+2. 创建 "Granular Access Token"
+3. 勾选 "Bypass 2FA requirement"
+4. 设置包权限为 "Read and write"
+
+**方案2: 配置 2FA**
+```bash
+# 启用 2FA
+npm profile enable-2fa auth-and-writes
+
+# 使用 2FA 发布
+npm publish --otp=123456  # 替换为你的 2FA 代码
+```
 
 ### Q: 创建 token 时提示 "Token name is required"
 **A**: 使用新版本 npm 命令:

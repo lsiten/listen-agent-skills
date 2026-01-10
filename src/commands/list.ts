@@ -29,15 +29,50 @@ export async function listCommand(): Promise<void> {
     console.log();
     for (const skill of skills) {
       const skillPath = join(skillsDir, skill.name);
-      const metadataPath = join(skillPath, 'skill.json');
+      const skillMdPath = join(skillPath, 'SKILL.md');
 
       let metadata: SkillMetadata | null = null;
       
-      // 尝试读取skill.json
-      if (await exists(metadataPath)) {
+      // 尝试读取SKILL.md
+      if (await exists(skillMdPath)) {
         try {
-          const metadataContent = await readFile(metadataPath, 'utf-8');
-          metadata = JSON.parse(metadataContent);
+          const skillContent = await readFile(skillMdPath, 'utf-8');
+          
+          // 解析YAML front matter
+          const yamlMatch = skillContent.match(/^---\n([\s\S]*?)\n---/);
+          if (yamlMatch) {
+            const yamlContent = yamlMatch[1];
+            
+            // 简单的YAML解析
+            metadata = {
+              name: skill.name,
+              description: '',
+              version: '1.0.0',
+              author: '',
+              tags: [],
+              aiTypes: ['all'],
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            
+            const lines = yamlContent.split('\n');
+            for (const line of lines) {
+              const match = line.match(/^(\w+):\s*(.+)$/);
+              if (match) {
+                const [, key, value] = match;
+                if (key === 'name') metadata.name = value.replace(/['"]/g, '');
+                if (key === 'description') metadata.description = value.replace(/['"]/g, '');
+                if (key === 'version') metadata.version = value.replace(/['"]/g, '');
+                if (key === 'author') metadata.author = value.replace(/['"]/g, '');
+                if (key === 'tags') {
+                  const tagsMatch = value.match(/\[(.*)\]/);
+                  if (tagsMatch) {
+                    metadata.tags = tagsMatch[1].split(',').map(t => t.trim().replace(/['"]/g, ''));
+                  }
+                }
+              }
+            }
+          }
         } catch {
           // 忽略解析错误
         }
@@ -58,7 +93,7 @@ export async function listCommand(): Promise<void> {
         console.log(`   ${chalk.dim('AI Types:')} ${metadata.aiTypes.join(', ')}`);
         console.log(`   ${chalk.dim('Updated:')} ${new Date(metadata.updatedAt).toLocaleDateString()}`);
       } else {
-        console.log(`   ${chalk.dim('No metadata found')}`);
+        console.log(`   ${chalk.dim('Agent Skills format - SKILL.md found')}`);
       }
       
       console.log();
