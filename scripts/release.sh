@@ -14,6 +14,17 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}🚀 Listen Agent Skills 发布脚本${NC}"
 echo
 
+# 检查NPM登录状态
+echo -e "${BLUE}🔍 检查NPM登录状态...${NC}"
+if ! npm whoami > /dev/null 2>&1; then
+    echo -e "${RED}❌ 未登录NPM，请先登录${NC}"
+    echo -e "${YELLOW}运行: npm login${NC}"
+    exit 1
+fi
+
+NPM_USER=$(npm whoami)
+echo -e "${GREEN}✅ NPM用户: ${NPM_USER}${NC}"
+
 # 检查是否在main分支
 CURRENT_BRANCH=$(git branch --show-current)
 if [ "$CURRENT_BRANCH" != "main" ]; then
@@ -101,4 +112,7 @@ echo -e "${GREEN}✅ 发布完成！${NC}"
 echo -e "${BLUE}📋 版本: v${NEW_VERSION}${NC}"
 echo -e "${BLUE}🔗 GitHub Actions 将自动发布到 NPM${NC}"
 echo -e "${BLUE}🔗 查看发布状态: https://github.com/lsiten/listen-agent-skills/actions${NC}"
+echo
+echo -e "${YELLOW}💡 提示: 如果GitHub Actions发布失败，请检查NPM_TOKEN配置${NC}"
+echo -e "${YELLOW}📖 详细指南: docs/NPM_TOKEN_SETUP.md${NC}"
 echo
