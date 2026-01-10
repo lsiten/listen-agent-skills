@@ -1,0 +1,10 @@
+{
+  "name": "{{name}}",
+  "version": "1.0.0",
+  "description": "Agent skill: {{name}}",
+  "author": "",
+  "tags": [],
+  "aiTypes": ["claude", "cursor", "windsurf", "kiro"],
+  "createdAt": "{{createdAt}}",
+  "updatedAt": "{{updatedAt}}"
+}

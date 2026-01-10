@@ -1,0 +1,8 @@
+# This directory will contain AI-specific templates and configurations
+# Add your AI assistant specific files here following the structure:
+# .claude/
+# .cursor/
+# .windsurf/
+# .kiro/
+# .shared/
+# etc.
