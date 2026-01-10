@@ -112,3 +112,7 @@ listen-agent.config.local.json
 test-results/
 playwright-report/
 test-results.xml
+
+# NPM package files
+*.tgz
+package-lock.json.bak

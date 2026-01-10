@@ -1,0 +1,66 @@
+name: Release and Publish
+
+on:
+  push:
+    tags:
+      - 'v*'  # 触发条件：推送以 v 开头的标签，如 v1.0.0
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Build project
+        run: npm run build
+        
+      - name: Run tests (if available)
+        run: npm test --if-present
+        
+      - name: Extract version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        
+      - name: Update package.json version
+        run: |
+          npm version ${{ steps.get_version.outputs.VERSION }} --no-git-tag-version
+          
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## 🚀 Release ${{ steps.get_version.outputs.VERSION }}
+            
+            ### 📦 Installation
+            ```bash
+            npm install -g listen-agent@${{ steps.get_version.outputs.VERSION }}
+            ```
+            
+            ### 🔗 Links
+            - [NPM Package](https://www.npmjs.com/package/listen-agent)
+            - [Documentation](https://github.com/lsiten/listen-agent-skills#readme)
+            
+            ### 📋 Changes
+            See the commit history for detailed changes in this release.
+          draft: false
+          prerelease: false

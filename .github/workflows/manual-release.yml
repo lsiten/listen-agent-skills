@@ -1,0 +1,95 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Is this a prerelease?'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  manual-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Build project
+        run: npm run build
+        
+      - name: Run tests (if available)
+        run: npm test --if-present
+        
+      - name: Update package.json version
+        run: |
+          npm version ${{ github.event.inputs.version }} --no-git-tag-version
+          
+      - name: Create and push tag
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to ${{ github.event.inputs.version }}"
+          git tag -a "v${{ github.event.inputs.version }}" -m "Release v${{ github.event.inputs.version }}"
+          git push origin main
+          git push origin "v${{ github.event.inputs.version }}"
+          
+      - name: Publish to npm
+        run: |
+          if [ "${{ github.event.inputs.prerelease }}" = "true" ]; then
+            npm publish --access public --tag beta
+          else
+            npm publish --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          release_name: Release ${{ github.event.inputs.version }}
+          body: |
+            ## 🚀 Release ${{ github.event.inputs.version }}
+            
+            ### 📦 Installation
+            ```bash
+            npm install -g listen-agent@${{ github.event.inputs.version }}
+            ```
+            
+            ### 🎯 Features
+            - ✅ CLI工具支持 setup/init/list/create 命令
+            - ✅ 支持10+种AI助手 (Claude, Cursor, Windsurf, Kiro等)
+            - ✅ 智能检测AI助手类型并自动安装
+            - ✅ 完全符合Agent Skills开放标准
+            - ✅ 支持模板化skill创建
+            - ✅ 完整的TypeScript类型支持
+            
+            ### 📋 Included Skills
+            - **企业微信通知** - 支持发送文本、markdown、图片等多种消息类型
+            - **Mac M4 LoRA训练** - 专为Mac M4芯片优化的LoRA自动化训练工具
+            
+            ### 🔗 Links
+            - [NPM Package](https://www.npmjs.com/package/listen-agent)
+            - [GitHub Repository](https://github.com/lsiten/listen-agent-skills)
+            - [Documentation](https://github.com/lsiten/listen-agent-skills#readme)
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease }}

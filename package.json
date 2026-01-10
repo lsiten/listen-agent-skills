@@ -3,18 +3,54 @@
   "version": "1.0.0",
   "description": "CLI to manage and install agent skills for AI coding assistants",
   "type": "module",
+  "main": "./dist/index.js",
   "bin": {
     "listen-agent": "./dist/index.js"
   },
+  "files": [
+    "dist/",
+    "templates/",
+    "skills/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build",
+    "test": "echo \"No tests specified\" && exit 0",
+    "lint": "echo \"No linting configured\" && exit 0",
+    "type-check": "tsc --noEmit"
   },
-  "keywords": ["agent", "skills", "cli", "ai", "assistant"],
+  "keywords": [
+    "agent", 
+    "skills", 
+    "cli", 
+    "ai", 
+    "assistant",
+    "agent-skills",
+    "claude",
+    "cursor",
+    "windsurf",
+    "kiro",
+    "automation",
+    "workflow"
+  ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lsiten/listen-agent-skills.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lsiten/listen-agent-skills/issues"
+  },
+  "homepage": "https://github.com/lsiten/listen-agent-skills#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  },
   "dependencies": {
     "commander": "^11.1.0",
     "prompts": "^2.4.2",

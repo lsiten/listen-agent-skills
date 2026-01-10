@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [16, 18, 20]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Lint code
+        run: npm run lint --if-present
+        
+      - name: Type check
+        run: npm run type-check --if-present
+        
+      - name: Build project
+        run: npm run build
+        
+      - name: Run tests
+        run: npm test --if-present
+        
+      - name: Test CLI commands
+        run: |
+          # 测试CLI基本功能
+          node dist/index.js --help
+          node dist/index.js --version
+          
+          # 测试setup命令
+          node dist/index.js setup
+          
+          # 测试list命令
+          node dist/index.js list
+          
+          # 测试create命令
+          node dist/index.js create test-ci-skill --template basic
+          
+          # 验证生成的文件
+          test -f skills/test-ci-skill/SKILL.md
+          test -f skills/test-ci-skill/README.md
+          
+          # 清理测试文件
+          rm -rf skills/test-ci-skill
