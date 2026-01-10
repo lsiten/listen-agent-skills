@@ -32,9 +32,17 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
         
-      - name: Update package.json version
+      - name: Verify version matches tag
         run: |
-          npm version ${{ steps.get_version.outputs.VERSION }} --no-git-tag-version
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${{ steps.get_version.outputs.VERSION }}"
+          echo "Package version: $PACKAGE_VERSION"
+          echo "Tag version: $TAG_VERSION"
+          if [ "$PACKAGE_VERSION" != "$TAG_VERSION" ]; then
+            echo "❌ Version mismatch: package.json has $PACKAGE_VERSION but tag is v$TAG_VERSION"
+            exit 1
+          fi
+          echo "✅ Version matches: $PACKAGE_VERSION"
           
       - name: Publish to npm
         run: npm publish --access public
@@ -55,6 +63,18 @@ jobs:
             ```bash
             npm install -g listen-agent@${{ steps.get_version.outputs.VERSION }}
             ```
+            
+            ### 🎯 Features
+            - ✅ CLI工具支持 setup/init/list/create 命令
+            - ✅ 支持10+种AI助手 (Claude, Cursor, Windsurf, Kiro等)
+            - ✅ 智能检测AI助手类型并自动安装
+            - ✅ 完全符合Agent Skills开放标准
+            - ✅ 支持模板化skill创建
+            - ✅ 完整的TypeScript类型支持
+            
+            ### 📋 Included Skills
+            - **企业微信通知** - 支持发送文本、markdown、图片等多种消息类型
+            - **Mac M4 LoRA训练** - 专为Mac M4芯片优化的LoRA自动化训练工具
             
             ### 🔗 Links
             - [NPM Package](https://www.npmjs.com/package/listen-agent)

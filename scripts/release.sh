@@ -116,3 +116,8 @@ echo
 echo -e "${YELLOW}💡 提示: 如果GitHub Actions发布失败，请检查NPM_TOKEN配置${NC}"
 echo -e "${YELLOW}📖 详细指南: docs/NPM_TOKEN_SETUP.md${NC}"
 echo
+echo -e "${BLUE}🔧 如果是首次设置，请先配置NPM Token:${NC}"
+echo -e "${YELLOW}1. 创建 NPM Token: npm token create --name=\"listen-agent-github-actions\" --type=automation${NC}"
+echo -e "${YELLOW}2. 在 GitHub 仓库设置中添加 NPM_TOKEN secret${NC}"
+echo -e "${YELLOW}3. 详细步骤请查看: docs/NPM_TOKEN_SETUP.md${NC}"
+echo

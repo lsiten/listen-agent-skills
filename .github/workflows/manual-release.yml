@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
         
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,16 +38,32 @@ jobs:
       - name: Run tests (if available)
         run: npm test --if-present
         
+      - name: Check if version already exists
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          TARGET_VERSION="${{ github.event.inputs.version }}"
+          echo "Current version: $CURRENT_VERSION"
+          echo "Target version: $TARGET_VERSION"
+          
+          if [ "$CURRENT_VERSION" = "$TARGET_VERSION" ]; then
+            echo "❌ Version $TARGET_VERSION already exists in package.json"
+            echo "Please choose a different version number"
+            exit 1
+          fi
+          
       - name: Update package.json version
         run: |
           npm version ${{ github.event.inputs.version }} --no-git-tag-version
           
-      - name: Create and push tag
+      - name: Commit version change
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add package.json package-lock.json
           git commit -m "chore: bump version to ${{ github.event.inputs.version }}"
+          
+      - name: Create and push tag
+        run: |
           git tag -a "v${{ github.event.inputs.version }}" -m "Release v${{ github.event.inputs.version }}"
           git push origin main
           git push origin "v${{ github.event.inputs.version }}"
