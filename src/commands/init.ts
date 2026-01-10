@@ -85,6 +85,7 @@ async function getAvailableSkills(skillsDir: string): Promise<SkillMetadata[]> {
 
 async function installSkillsToAI(
   cwd: string,
+  skillsSourceDir: string,
   skills: SkillMetadata[],
   aiType: AIType,
   force?: boolean
@@ -107,7 +108,7 @@ async function installSkillsToAI(
       
       // 为每个skill安装到对应目录
       for (const skill of skills) {
-        const skillSourceDir = join(cwd, 'skills', skill.name);
+        const skillSourceDir = join(skillsSourceDir, skill.name);
         const result = await installSkillToFolder(
           skillSourceDir,
           targetDir,
@@ -208,7 +209,7 @@ async function installSkillToFolder(
       return null;
   }
   
-  // 检查目标文件是否已存在
+  // 检查目标文件是否已存在（只有在非强制模式下才跳过）
   if (!force && await exists(targetFileName)) {
     return null; // 跳过已存在的文件
   }
@@ -233,17 +234,42 @@ export async function initCommand(options: InitOptions): Promise<void> {
   logger.title('Listen Agent Skills Installer');
 
   const cwd = process.cwd();
-  const skillsDir = join(cwd, 'skills');
 
-  // 检查skills目录是否存在
-  if (!(await exists(skillsDir))) {
-    logger.error('No skills directory found in current project.');
-    logger.info('This command installs existing skills to AI assistant projects.');
-    logger.info('Make sure you are in a listen-agent skills project directory.');
+  // 2. 查找 skills 来源
+  let skillsSourceDir: string | null = null;
+  
+  // 优先级1: 检查当前目录是否有 skills 目录（开发模式）
+  const localSkillsDir = join(cwd, 'skills');
+  if (await exists(localSkillsDir)) {
+    skillsSourceDir = localSkillsDir;
+    logger.info('Found local skills directory');
+  }
+  
+  // 优先级2: 检查全局安装的 listen-agent 包中的 skills
+  if (!skillsSourceDir) {
+    try {
+      // 尝试找到全局安装的 listen-agent 包
+      const globalSkillsDir = join(__dirname, '..', '..', 'skills');
+      if (await exists(globalSkillsDir)) {
+        skillsSourceDir = globalSkillsDir;
+        logger.info('Using skills from global listen-agent installation');
+      }
+    } catch {
+      // 忽略错误
+    }
+  }
+  
+  // 优先级3: 提示用户指定 skills 目录
+  if (!skillsSourceDir) {
+    logger.error('No skills found.');
+    logger.info('Options:');
+    logger.info('1. Run this command in a listen-agent skills project directory');
+    logger.info('2. Install listen-agent globally: npm install -g listen-agent');
+    logger.info('3. Clone skills repository: git clone https://github.com/lsiten/listen-agent-skills.git');
     return;
   }
 
-  // 2. 获取AI类型
+  // 3. 获取AI类型
   let aiType = options.ai;
 
   if (!aiType) {
@@ -276,21 +302,22 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   logger.info(`Installing skills for: ${chalk.cyan(getAITypeDescription(aiType))}`);
+  logger.info(`Skills source: ${skillsSourceDir}`);
 
   const spinner = ora('Installing skills...').start();
 
   try {
     // 获取所有skills
-    const skills = await getAvailableSkills(skillsDir);
+    const skills = await getAvailableSkills(skillsSourceDir);
     
     if (skills.length === 0) {
       spinner.fail('No skills found to install');
-      logger.info('Create skills first using: listen-agent create <skill-name>');
+      logger.info('Make sure the skills directory contains valid SKILL.md files');
       return;
     }
 
     // 安装skills到对应的AI助手目录
-    const installedSkills = await installSkillsToAI(cwd, skills, aiType, options.force);
+    const installedSkills = await installSkillsToAI(cwd, skillsSourceDir, skills, aiType, options.force);
 
     spinner.succeed('Skills installation complete!');
 
