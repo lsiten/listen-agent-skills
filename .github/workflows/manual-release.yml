@@ -13,6 +13,10 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write  # 允许创建 release 和推送代码
+  packages: write  # 允许发布包
+
 jobs:
   manual-release:
     runs-on: ubuntu-latest
@@ -79,12 +83,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           
       - name: Create GitHub Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ github.event.inputs.version }}
-          release_name: Release ${{ github.event.inputs.version }}
+          name: Release ${{ github.event.inputs.version }}
           body: |
             ## 🚀 Release ${{ github.event.inputs.version }}
             
@@ -111,3 +113,5 @@ jobs:
             - [Documentation](https://github.com/lsiten/listen-agent-skills#readme)
           draft: false
           prerelease: ${{ github.event.inputs.prerelease }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

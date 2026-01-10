@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'  # 触发条件：推送以 v 开头的标签，如 v1.0.0
 
+permissions:
+  contents: write  # 允许创建 release
+  packages: write  # 允许发布包
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -50,12 +54,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           
       - name: Create GitHub Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ steps.get_version.outputs.VERSION }}
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ steps.get_version.outputs.VERSION }}
           body: |
             ## 🚀 Release ${{ steps.get_version.outputs.VERSION }}
             
@@ -84,3 +86,5 @@ jobs:
             See the commit history for detailed changes in this release.
           draft: false
           prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

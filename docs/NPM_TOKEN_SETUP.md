@@ -128,7 +128,18 @@ npm token create --name="your-token-name" --type=automation
 2. Token 是否有发布权限（使用 automation 类型）
 3. Token 是否已过期
 
-### Q: 如何撤销 Token？
+### Q: GitHub Actions 提示 "Resource not accessible by integration"
+**A**: 这是 GitHub Actions 权限问题，已在最新版本中修复：
+
+**解决方案**:
+1. 工作流已添加必要的权限配置：
+   ```yaml
+   permissions:
+     contents: write  # 允许创建 release
+     packages: write  # 允许发布包
+   ```
+2. 使用了更现代的 `softprops/action-gh-release@v1` 替代已废弃的 `actions/create-release@v1`
+3. 如果仍有问题，检查仓库设置中的 Actions 权限
 **A**: 
 ```bash
 # 列出所有 tokens
@@ -138,7 +149,7 @@ npm token list
 npm token revoke <token-id>
 ```
 
-### Q: 包名冲突怎么办？
+### Q: 如何撤销 Token？
 **A**: 
 1. 检查包名是否已被占用: https://www.npmjs.com/package/listen-agent
 2. 如果被占用，修改 package.json 中的 name 字段
