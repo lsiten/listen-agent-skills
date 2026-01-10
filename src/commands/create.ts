@@ -1,9 +1,9 @@
-import { writeFile } from 'node:fs/promises';
+import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
 import { createDirectory, exists } from '../utils/files.js';
-import type { CreateOptions, SkillMetadata } from '../types/index.js';
+import type { CreateOptions } from '../types/index.js';
 
 export async function createCommand(name: string, options: CreateOptions): Promise<void> {
   logger.title(`Creating Agent Skill: ${name}`);
@@ -14,7 +14,7 @@ export async function createCommand(name: string, options: CreateOptions): Promi
 
   // 检查skills目录是否存在
   if (!(await exists(skillsDir))) {
-    logger.error('Skills directory not found. Run "listen-agent init" first.');
+    logger.error('Skills directory not found. Run "listen-agent setup" first.');
     return;
   }
 
@@ -28,38 +28,25 @@ export async function createCommand(name: string, options: CreateOptions): Promi
     // 创建skill目录
     await createDirectory(skillPath);
 
-    // 创建skill元数据
-    const metadata: SkillMetadata = {
-      name,
-      version: '1.0.0',
-      description: `Agent skill: ${name}`,
-      author: '',
-      tags: [],
-      aiTypes: ['claude', 'cursor', 'windsurf', 'kiro'],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    await writeFile(
-      join(skillPath, 'skill.json'),
-      JSON.stringify(metadata, null, 2)
-    );
-
     // 根据模板创建文件
-    await createTemplateFiles(skillPath, name, options.template || 'basic');
+    await createFromTemplate(skillPath, name, options.template || 'basic');
 
     logger.success(`Skill "${name}" created successfully!`);
     
     console.log();
     console.log(chalk.bold('Created files:'));
-    console.log(`  ${chalk.green('+')} skills/${name}/skill.json`);
+    console.log(`  ${chalk.green('+')} skills/${name}/SKILL.md`);
     console.log(`  ${chalk.green('+')} skills/${name}/README.md`);
-    console.log(`  ${chalk.green('+')} skills/${name}/prompt.md`);
+    
+    if (options.template === 'advanced') {
+      console.log(`  ${chalk.green('+')} skills/${name}/scripts/`);
+    }
+    
     console.log();
     
     console.log(chalk.bold('Next steps:'));
-    console.log(chalk.dim(`  1. Edit skills/${name}/prompt.md to define your skill`));
-    console.log(chalk.dim(`  2. Update skills/${name}/skill.json with metadata`));
+    console.log(chalk.dim(`  1. Edit skills/${name}/SKILL.md to define your skill`));
+    console.log(chalk.dim(`  2. Update the metadata and instructions`));
     console.log(chalk.dim(`  3. Test your skill with your AI assistant`));
     console.log();
 
@@ -71,63 +58,124 @@ export async function createCommand(name: string, options: CreateOptions): Promi
   }
 }
 
-async function createTemplateFiles(skillPath: string, name: string, template: string): Promise<void> {
-  // 创建README.md
-  const readmeContent = `# ${name}
+async function createFromTemplate(skillPath: string, name: string, template: string): Promise<void> {
+  const cwd = process.cwd();
+  const templateDir = join(cwd, 'templates', template);
+  
+  // 检查模板是否存在
+  if (!(await exists(templateDir))) {
+    throw new Error(`Template "${template}" not found`);
+  }
 
-## Description
+  // 模板变量
+  const variables = {
+    name,
+    description: `Agent skill for ${name}`,
+    author: '',
+    tags: '[]',
+    task_overview: `completing ${name} related tasks`,
+    domain: name,
+    capabilities: 'comprehensive',
+    features: 'advanced functionality',
+    capability_1_description: 'Primary capability description',
+    capability_2_description: 'Secondary capability description',
+    capability_3_description: 'Additional capability description',
+    capability_4_description: 'Extended capability description',
+    capability_5_description: 'Advanced capability description',
+    processor_requirement: 'Modern CPU',
+    memory_requirement: '≥8GB RAM',
+    storage_requirement: '≥10GB available space',
+    dependency_1: 'Python 3.8+',
+    dependency_2: 'Node.js 16+',
+    dependency_3: 'Required libraries',
+    config_param: 'default',
+    input_param: 'input_path',
+    output_param: 'output_path',
+    config_file: 'config.json',
+    result_path: 'results/',
+    param_1: 'input_path',
+    default_1: './input',
+    param_1_desc: 'Input file or directory path',
+    param_2: 'batch_size',
+    default_2: '10',
+    param_2_desc: 'Processing batch size',
+    param_3: 'verbose',
+    default_3: 'false',
+    param_3_desc: 'Enable verbose output',
+    performance_tip_1: 'Use appropriate batch sizes',
+    performance_tip_2: 'Enable parallel processing when possible',
+    security_tip_1: 'Validate all input parameters',
+    security_tip_2: 'Use secure file permissions',
+    error_handling_tip_1: 'Always check return codes',
+    error_handling_tip_2: 'Implement proper logging',
+    error_1: 'Command not found',
+    cause_1: 'Missing dependencies',
+    solution_1: 'Run install_dependencies.sh',
+    error_2: 'Permission denied',
+    cause_2: 'Insufficient file permissions',
+    solution_2: 'Check file and directory permissions',
+    error_3: 'Out of memory',
+    cause_3: 'Large dataset processing',
+    solution_3: 'Reduce batch size or increase system memory',
+    plugin_description: 'Extensible plugin architecture',
+    api_description: 'RESTful API integration',
+    batch_description: 'Batch processing capabilities',
+    monitoring_description: 'Real-time monitoring and reporting',
+    framework: 'Custom framework',
+    data_processing: 'Stream processing',
+    storage_solution: 'File-based storage',
+    communication_protocol: 'HTTP/REST',
+    feature_1: 'Feature 1 description',
+    feature_2: 'Feature 2 description',
+    feature_3: 'Feature 3 description'
+  };
 
-Agent skill for ${name}.
+  // 复制并处理SKILL.md
+  const skillTemplate = await readFile(join(templateDir, 'SKILL.md'), 'utf-8');
+  const skillContent = replaceVariables(skillTemplate, variables);
+  await writeFile(join(skillPath, 'SKILL.md'), skillContent);
 
-## Usage
-
-Describe how to use this skill with your AI assistant.
-
-## Configuration
-
-Any configuration options or requirements.
-
-## Examples
-
-Provide examples of how this skill works.
-`;
-
+  // 复制并处理README.md
+  const readmeTemplate = await readFile(join(templateDir, 'README.md'), 'utf-8');
+  const readmeContent = replaceVariables(readmeTemplate, variables);
   await writeFile(join(skillPath, 'README.md'), readmeContent);
 
-  // 创建基础prompt.md
-  const promptContent = `# ${name} Skill
-
-You are an AI assistant with the ${name} skill.
-
-## Capabilities
-
-- Describe what this skill can do
-- List specific functions or features
-- Explain any limitations
-
-## Instructions
-
-Provide detailed instructions for how to use this skill effectively.
-
-## Examples
-
-Show examples of input/output or usage patterns.
-
-## Best Practices
-
-- List best practices for using this skill
-- Include any tips or recommendations
-`;
-
-  await writeFile(join(skillPath, 'prompt.md'), promptContent);
-
-  // 根据模板类型创建额外文件
+  // 如果是高级模板，复制scripts目录
   if (template === 'advanced') {
-    const configContent = `{
-  "parameters": {},
-  "settings": {},
-  "dependencies": []
-}`;
-    await writeFile(join(skillPath, 'config.json'), configContent);
+    const scriptsDir = join(templateDir, 'scripts');
+    const targetScriptsDir = join(skillPath, 'scripts');
+    
+    if (await exists(scriptsDir)) {
+      await createDirectory(targetScriptsDir);
+      
+      // 复制脚本文件
+      const { readdir } = await import('node:fs/promises');
+      const scriptFiles = await readdir(scriptsDir);
+      
+      for (const file of scriptFiles) {
+        const scriptTemplate = await readFile(join(scriptsDir, file), 'utf-8');
+        const scriptContent = replaceVariables(scriptTemplate, variables);
+        await writeFile(join(targetScriptsDir, file), scriptContent);
+      }
+      
+      // 设置脚本执行权限
+      const { chmod } = await import('node:fs/promises');
+      for (const file of scriptFiles) {
+        if (file.endsWith('.sh')) {
+          await chmod(join(targetScriptsDir, file), 0o755);
+        }
+      }
+    }
   }
+}
+
+function replaceVariables(content: string, variables: Record<string, string>): string {
+  let result = content;
+  
+  for (const [key, value] of Object.entries(variables)) {
+    const regex = new RegExp(`{{${key}}}`, 'g');
+    result = result.replace(regex, value);
+  }
+  
+  return result;
 }
