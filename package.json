@@ -1,6 +1,6 @@
 {
   "name": "listen-agent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CLI to manage and install agent skills for AI coding assistants",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,10 +25,10 @@
     "type-check": "tsc --noEmit"
   },
   "keywords": [
-    "agent", 
-    "skills", 
-    "cli", 
-    "ai", 
+    "agent",
+    "skills",
+    "cli",
+    "ai",
     "assistant",
     "agent-skills",
     "claude",
