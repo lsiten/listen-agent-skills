@@ -41,6 +41,7 @@ export const AI_FOLDERS: Record<Exclude<AIType, 'all'>, string[]> = {
 export interface InitOptions {
   ai?: AIType;
   force?: boolean;
+  skills?: string[]; // 指定要安装的技能名称列表
 }
 
 export interface CreateOptions {

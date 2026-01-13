@@ -304,20 +304,83 @@ export async function initCommand(options: InitOptions): Promise<void> {
   logger.info(`Installing skills for: ${chalk.cyan(getAITypeDescription(aiType))}`);
   logger.info(`Skills source: ${skillsSourceDir}`);
 
-  const spinner = ora('Installing skills...').start();
+  // 获取所有可用的skills
+  const allSkills = await getAvailableSkills(skillsSourceDir);
+  
+  if (allSkills.length === 0) {
+    logger.error('No skills found to install');
+    logger.info('Make sure the skills directory contains valid SKILL.md files');
+    return;
+  }
 
-  try {
-    // 获取所有skills
-    const skills = await getAvailableSkills(skillsSourceDir);
-    
-    if (skills.length === 0) {
-      spinner.fail('No skills found to install');
-      logger.info('Make sure the skills directory contains valid SKILL.md files');
+  // 4. 技能选择交互
+  let selectedSkills = allSkills;
+
+  // 如果通过命令行指定了特定技能
+  if (options.skills && options.skills.length > 0) {
+    const requestedSkills = options.skills;
+    selectedSkills = allSkills.filter(skill => 
+      requestedSkills.includes(skill.name)
+    );
+
+    // 检查是否有未找到的技能
+    const foundSkillNames = selectedSkills.map(s => s.name);
+    const notFoundSkills = requestedSkills.filter(name => 
+      !foundSkillNames.includes(name)
+    );
+
+    if (notFoundSkills.length > 0) {
+      logger.warn(`Skills not found: ${notFoundSkills.join(', ')}`);
+    }
+
+    if (selectedSkills.length === 0) {
+      logger.error('None of the specified skills were found');
+      logger.info('Available skills:');
+      allSkills.forEach(skill => {
+        console.log(`  ${chalk.cyan('•')} ${skill.name}`);
+      });
       return;
     }
 
-    // 安装skills到对应的AI助手目录
-    const installedSkills = await installSkillsToAI(cwd, skillsSourceDir, skills, aiType, options.force);
+    logger.info(`Installing specified skills: ${selectedSkills.map(s => s.name).join(', ')}`);
+  }
+  // 交互式选择技能（仅在非强制模式且未指定特定技能时）
+  else if (!options.force) {
+    logger.info(`Found ${allSkills.length} available skill${allSkills.length > 1 ? 's' : ''}:`);
+    allSkills.forEach(skill => {
+      console.log(`  ${chalk.cyan('•')} ${skill.name} - ${skill.description}`);
+    });
+
+    console.log();
+    const skillResponse = await prompts({
+      type: 'multiselect',
+      name: 'skills',
+      message: 'Select skills to install (use space to select, enter to confirm):',
+      choices: allSkills.map(skill => ({
+        title: `${skill.name} - ${skill.description}`,
+        value: skill,
+        selected: true, // 默认全选
+      })),
+      min: 1,
+      hint: '- Space to select. Return to submit'
+    });
+
+    // 处理用户取消
+    if (!skillResponse.skills || skillResponse.skills.length === 0) {
+      logger.warn('No skills selected, installation cancelled');
+      return;
+    }
+
+    selectedSkills = skillResponse.skills;
+  }
+
+  logger.info(`Installing ${selectedSkills.length} skill${selectedSkills.length > 1 ? 's' : ''}...`);
+
+  const spinner = ora('Installing skills...').start();
+
+  try {
+    // 安装选中的skills到对应的AI助手目录
+    const installedSkills = await installSkillsToAI(cwd, skillsSourceDir, selectedSkills, aiType, options.force);
 
     spinner.succeed('Skills installation complete!');
 

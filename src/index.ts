@@ -43,6 +43,7 @@ program
   .command('init')
   .description('Install existing skills to AI assistant projects')
   .option('-a, --ai <type>', `AI assistant type (${AI_TYPES.join(', ')})`)
+  .option('-s, --skills <skills...>', 'Specific skills to install (space-separated)')
   .option('-f, --force', 'Overwrite existing files')
   .action(async (options) => {
     if (options.ai && !AI_TYPES.includes(options.ai)) {
@@ -53,6 +54,7 @@ program
     
     await initCommand({
       ai: options.ai,
+      skills: options.skills,
       force: options.force,
     });
   });

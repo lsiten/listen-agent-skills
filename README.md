@@ -9,6 +9,8 @@
 - 🛠️ 简单的CLI命令
 - 📝 模板化技能创建
 - 🔍 智能AI助手检测
+- ✨ 交互式技能选择
+- 🎯 精确技能安装控制
 
 ## 安装
 
@@ -21,13 +23,17 @@ npm install -g listen-agent
 ### 初始化项目
 
 ```bash
-# 自动检测AI助手类型
+# 自动检测AI助手类型并交互式选择技能
 listen-agent init
 
 # 指定AI助手类型
 listen-agent init --ai claude
 listen-agent init --ai cursor
 listen-agent init --ai all
+
+# 安装特定技能
+listen-agent init --ai kiro --skills wechat-work-notification
+listen-agent init --ai cursor --skills skill1 skill2 skill3
 
 # 强制覆盖现有文件
 listen-agent init --force
@@ -47,6 +53,44 @@ listen-agent create my-skill --template advanced
 
 ```bash
 listen-agent list
+```
+
+## 技能选择
+
+### 交互式选择
+
+当运行 `listen-agent init` 而不指定 `--skills` 参数时，工具会显示所有可用技能并提供交互式多选界面：
+
+```bash
+listen-agent init --ai kiro
+# 显示可用技能列表
+# 使用空格键选择/取消选择技能
+# 按回车键确认安装
+```
+
+### 命令行指定
+
+直接在命令行中指定要安装的技能：
+
+```bash
+# 安装单个技能
+listen-agent init --ai kiro --skills wechat-work-notification
+
+# 安装多个技能
+listen-agent init --ai cursor --skills skill1 skill2 skill3
+```
+
+### 错误处理
+
+如果指定的技能不存在，工具会显示警告并列出所有可用技能：
+
+```bash
+listen-agent init --ai kiro --skills non-existent-skill
+# warn Skills not found: non-existent-skill
+# error None of the specified skills were found
+# info Available skills:
+#   • mac-m4-lora-training
+#   • wechat-work-notification
 ```
 
 ## 支持的AI助手
