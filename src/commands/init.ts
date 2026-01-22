@@ -1,6 +1,6 @@
-import { dirname, join } from 'node:path';
+import { dirname, join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile, cp } from 'node:fs/promises';
 import prompts from 'prompts';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -127,6 +127,95 @@ async function installSkillsToAI(
   return installed;
 }
 
+/**
+ * 复制 scripts 目录到目标位置
+ * @param sourceScriptsDir 源 scripts 目录路径
+ * @param targetScriptsDir 目标 scripts 目录路径
+ */
+async function copyScriptsDirectory(
+  sourceScriptsDir: string,
+  targetScriptsDir: string
+): Promise<void> {
+  if (!(await exists(sourceScriptsDir))) {
+    return; // 如果源目录不存在，直接返回
+  }
+
+  // 创建目标目录
+  await createDirectory(targetScriptsDir);
+
+  // 定义文件过滤器，排除不必要的文件
+  const EXCLUDED_SCRIPTS_FILES = ['__pycache__', '.DS_Store', '.git', '.gitignore'];
+  const filterFn = (src: string): boolean => {
+    const fileName = basename(src);
+    return !EXCLUDED_SCRIPTS_FILES.includes(fileName);
+  };
+
+  // 复制 scripts 目录
+  try {
+    await cp(sourceScriptsDir, targetScriptsDir, { recursive: true, filter: filterFn });
+  } catch (error) {
+    // 如果复制失败，记录错误但不中断安装流程
+    logger.warn(`Failed to copy scripts directory: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * 复制 skill 目录下的所有资源文件（除了 SKILL.md 和 scripts）
+ * @param skillSourceDir 源 skill 目录路径
+ * @param targetPath 目标路径（skill 的安装目录）
+ */
+async function copySkillResources(
+  skillSourceDir: string,
+  targetPath: string
+): Promise<void> {
+  try {
+    const entries = await readdir(skillSourceDir, { withFileTypes: true });
+    
+    // 定义需要排除的文件和目录
+    const EXCLUDED_ITEMS = ['SKILL.md', 'scripts', '.DS_Store', '.git', '.gitignore', '__pycache__'];
+    
+    for (const entry of entries) {
+      const itemName = entry.name;
+      
+      // 跳过排除的项目
+      if (EXCLUDED_ITEMS.includes(itemName)) {
+        continue;
+      }
+      
+      const sourcePath = join(skillSourceDir, itemName);
+      const targetItemPath = join(targetPath, itemName);
+      
+      // 如果是目录，递归复制
+      if (entry.isDirectory()) {
+        // 定义目录过滤器，排除不必要的文件
+        const EXCLUDED_FILES = ['__pycache__', '.DS_Store', '.git', '.gitignore'];
+        const filterFn = (src: string): boolean => {
+          const fileName = basename(src);
+          return !EXCLUDED_FILES.includes(fileName);
+        };
+        
+        try {
+          await createDirectory(targetItemPath);
+          await cp(sourcePath, targetItemPath, { recursive: true, filter: filterFn });
+        } catch (error) {
+          logger.warn(`Failed to copy directory ${itemName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      } else {
+        // 如果是文件，直接复制
+        try {
+          const content = await readFile(sourcePath);
+          await writeFile(targetItemPath, content);
+        } catch (error) {
+          logger.warn(`Failed to copy file ${itemName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      }
+    }
+  } catch (error) {
+    // 如果读取目录失败，记录错误但不中断安装流程
+    logger.warn(`Failed to copy skill resources: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
 async function installSkillToFolder(
   skillSourceDir: string,
   targetDir: string,
@@ -152,31 +241,36 @@ async function installSkillToFolder(
       break;
       
     case 'cursor':
-      targetPath = join(targetDir, 'commands');
+      // 调整目录结构：创建 skill 名称的目录，将文件放在其中
+      targetPath = join(targetDir, 'commands', skill.name);
       await createDirectory(targetPath);
       targetFileName = join(targetPath, `${skill.name}.md`);
       break;
       
     case 'windsurf':
-      targetPath = join(targetDir, 'workflows');
+      // 创建子目录结构以支持 scripts
+      targetPath = join(targetDir, 'workflows', skill.name);
       await createDirectory(targetPath);
       targetFileName = join(targetPath, `${skill.name}.md`);
       break;
       
     case 'kiro':
-      targetPath = join(targetDir, 'steering');
+      // 创建子目录结构以支持 scripts
+      targetPath = join(targetDir, 'steering', skill.name);
       await createDirectory(targetPath);
       targetFileName = join(targetPath, `${skill.name}.md`);
       break;
       
     case 'antigravity':
-      targetPath = join(targetDir, 'workflows');
+      // 创建子目录结构以支持 scripts
+      targetPath = join(targetDir, 'workflows', skill.name);
       await createDirectory(targetPath);
       targetFileName = join(targetPath, `${skill.name}.md`);
       break;
       
     case 'copilot':
-      targetPath = join(targetDir, 'prompts');
+      // 创建子目录结构以支持 scripts
+      targetPath = join(targetDir, 'prompts', skill.name);
       await createDirectory(targetPath);
       targetFileName = join(targetPath, `${skill.name}.prompt.md`);
       break;
@@ -188,13 +282,15 @@ async function installSkillToFolder(
       break;
       
     case 'roocode':
-      targetPath = join(targetDir, 'commands');
+      // 创建子目录结构以支持 scripts
+      targetPath = join(targetDir, 'commands', skill.name);
       await createDirectory(targetPath);
       targetFileName = join(targetPath, `${skill.name}.md`);
       break;
       
     case 'qoder':
-      targetPath = join(targetDir, 'rules');
+      // 创建子目录结构以支持 scripts
+      targetPath = join(targetDir, 'rules', skill.name);
       await createDirectory(targetPath);
       targetFileName = join(targetPath, `${skill.name}.md`);
       break;
@@ -222,6 +318,48 @@ async function installSkillToFolder(
   
   // 写入目标文件
   await writeFile(targetFileName, markdownContent);
+  
+  // 复制 scripts 目录（如果存在）
+  const sourceScriptsDir = join(skillSourceDir, 'scripts');
+  let targetScriptsDir: string;
+  
+  // 根据 AI 类型确定 scripts 目录的目标位置
+  switch (aiType) {
+    case 'claude':
+    case 'codex':
+    case 'gemini':
+      // 这些类型已经有 skill 名称的目录，scripts 放在其中
+      targetScriptsDir = join(targetPath, 'scripts');
+      break;
+      
+    case 'cursor':
+      // cursor 现在也有 skill 名称的目录
+      targetScriptsDir = join(targetPath, 'scripts');
+      break;
+      
+    case 'windsurf':
+    case 'antigravity':
+    case 'kiro':
+    case 'copilot':
+    case 'roocode':
+    case 'qoder':
+      // 这些类型现在都有子目录结构，scripts 放在其中
+      targetScriptsDir = join(targetPath, 'scripts');
+      break;
+      
+    default:
+      // 其他类型不复制 scripts
+      return {
+        name: skill.name,
+        targetPath: targetFileName.replace(process.cwd() + '/', '')
+      };
+  }
+  
+  // 复制 scripts 目录
+  await copyScriptsDirectory(sourceScriptsDir, targetScriptsDir);
+  
+  // 复制其他资源文件（README.md、配置文件、模板文件等）
+  await copySkillResources(skillSourceDir, targetPath);
   
   return {
     name: skill.name,

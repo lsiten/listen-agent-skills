@@ -116,3 +116,5 @@ test-results.xml
 # NPM package files
 *.tgz
 package-lock.json.bak
+
+__pycache__
