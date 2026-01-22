@@ -173,10 +173,15 @@ def extract_ticket_info(user_input: str, project_path: Optional[str] = None) -> 
     if region_info:
         ticket_info['region_info'] = region_info
     
-    # 提取时间信息
+    # 提取时间信息（支持多个时间）
     time_info = extract_time_info(user_input)
     if time_info:
         ticket_info['time_info'] = time_info
+    
+    # 提取发送方信息（支持多个发送方）
+    senders_info = extract_senders_info(user_input)
+    if senders_info:
+        ticket_info['senders_info'] = senders_info
     
     # 提取关键词
     keywords = extract_keywords(user_input)
@@ -614,33 +619,177 @@ def extract_region_info(text: str) -> Dict[str, Any]:
 
 
 def extract_time_info(text: str) -> Dict[str, Any]:
-    """提取时间信息"""
-    time_info = {}
+    """
+    提取时间信息（支持多个时间）
+    
+    ⚠️ 重要：此函数只是辅助提取，真正的分析应该由AI完成
+    AI会分析邮件沟通记录，识别多个发送方和多个时间，理解邮件上下文
+    """
+    time_info = {
+        'ticket_times': [],  # 多个工单时间
+        'email_times': [],   # 多个邮件时间
+        'problem_times': [], # 多个问题时间
+        'all_times': [],     # 所有时间（用于AI分析）
+        'time_type': None
+    }
     
     # 工单时间关键词
     ticket_time_keywords = ['工单时间', '上报时间', '创建时间', '提交时间', '工单创建', '工单提交']
-    ticket_time = extract_time_by_keywords(text, ticket_time_keywords)
-    if ticket_time:
-        time_info['ticket_time'] = ticket_time
-        time_info['time_type'] = 'ticket_time'
+    ticket_times = extract_times_by_keywords(text, ticket_time_keywords)
+    if ticket_times:
+        time_info['ticket_times'] = ticket_times
+        time_info['all_times'].extend([{'time': t, 'type': 'ticket_time'} for t in ticket_times])
+        if not time_info['time_type']:
+            time_info['time_type'] = 'ticket_time'
     
-    # 邮件时间关键词
-    email_time_keywords = ['邮件时间', '发送时间', '收到时间', '邮件发送', '邮件收到']
-    email_time = extract_time_by_keywords(text, email_time_keywords)
-    if email_time:
-        time_info['email_time'] = email_time
-        if 'time_type' not in time_info:
+    # 邮件时间关键词（支持多个邮件）
+    email_time_keywords = ['邮件时间', '发送时间', '收到时间', '邮件发送', '邮件收到', 'From:', 'Date:', 'Sent:', 'Received:']
+    email_times = extract_times_by_keywords(text, email_time_keywords)
+    if email_times:
+        time_info['email_times'] = email_times
+        time_info['all_times'].extend([{'time': t, 'type': 'email_time'} for t in email_times])
+        if not time_info['time_type']:
             time_info['time_type'] = 'email_time'
     
     # 问题时间关键词
     problem_time_keywords = ['发生时间', '出现时间', '异常时间', '问题时间']
-    problem_time = extract_time_by_keywords(text, problem_time_keywords)
-    if problem_time:
-        time_info['problem_time'] = problem_time
-        if 'time_type' not in time_info:
+    problem_times = extract_times_by_keywords(text, problem_time_keywords)
+    if problem_times:
+        time_info['problem_times'] = problem_times
+        time_info['all_times'].extend([{'time': t, 'type': 'problem_time'} for t in problem_times])
+        if not time_info['time_type']:
             time_info['time_type'] = 'problem_time'
     
+    # 兼容旧格式：保留单个时间字段（使用第一个时间）
+    if time_info['ticket_times']:
+        time_info['ticket_time'] = time_info['ticket_times'][0]
+    if time_info['email_times']:
+        time_info['email_time'] = time_info['email_times'][0]
+    if time_info['problem_times']:
+        time_info['problem_time'] = time_info['problem_times'][0]
+    
     return time_info
+
+
+def extract_times_by_keywords(text: str, keywords: list) -> list:
+    """
+    提取多个时间（支持邮件沟通记录中的多个时间）
+    
+    ⚠️ 重要：此函数只是辅助提取，真正的分析应该由AI完成
+    """
+    times = []
+    
+    # 尝试匹配所有可能的时间
+    for keyword in keywords:
+        # 匹配 "关键词: 时间" 格式
+        pattern = rf'{re.escape(keyword)}[:：]?\s*([^\n]+)'
+        matches = re.finditer(pattern, text, re.IGNORECASE)
+        for match in matches:
+            time_str = match.group(1).strip()
+            # 尝试提取时间部分（可能包含其他文本）
+            time_part = extract_time_from_string(time_str)
+            if time_part:
+                parsed_time = parse_time_string(time_part)
+                if parsed_time and parsed_time not in times:
+                    times.append(parsed_time)
+    
+    # 如果没有找到，尝试直接匹配时间格式
+    if not times:
+        # 匹配常见的时间格式
+        time_patterns = [
+            r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2})',
+            r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})',
+            r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})',
+        ]
+        for pattern in time_patterns:
+            matches = re.finditer(pattern, text)
+            for match in matches:
+                time_str = match.group(1)
+                parsed_time = parse_time_string(time_str)
+                if parsed_time and parsed_time not in times:
+                    times.append(parsed_time)
+    
+    # 按时间排序
+    times.sort()
+    return times
+
+
+def extract_time_from_string(text: str) -> Optional[str]:
+    """从字符串中提取时间部分"""
+    # 匹配时间格式
+    time_patterns = [
+        r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2})',
+        r'(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})',
+        r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})',
+    ]
+    for pattern in time_patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1)
+    return None
+
+
+def extract_senders_info(text: str) -> Dict[str, Any]:
+    """
+    提取发送方信息（支持多个发送方）
+    
+    ⚠️ 重要：此函数只是辅助提取，真正的分析应该由AI完成
+    AI会分析邮件沟通记录，识别多个发送方，理解邮件上下文和对话流程
+    """
+    senders_info = {
+        'senders': [],  # 多个发送方列表
+        'primary_sender': None,  # 主要发送方（第一个或最相关的）
+        'sender_count': 0
+    }
+    
+    # 匹配邮件格式的发送方
+    # From: name <email@example.com>
+    # 发件人: name <email@example.com>
+    sender_patterns = [
+        r'From[:：]\s*([^\n<]+)(?:<([^>]+)>)?',
+        r'发件人[:：]\s*([^\n<]+)(?:<([^>]+)>)?',
+        r'Sender[:：]\s*([^\n<]+)(?:<([^>]+)>)?',
+        r'发送人[:：]\s*([^\n<]+)(?:<([^>]+)>)?',
+    ]
+    
+    seen_senders = set()
+    for pattern in sender_patterns:
+        matches = re.finditer(pattern, text, re.IGNORECASE)
+        for match in matches:
+            name = match.group(1).strip() if match.group(1) else ''
+            email = match.group(2).strip() if match.group(2) else ''
+            
+            # 构建发送方标识
+            sender_key = email if email else name
+            if sender_key and sender_key not in seen_senders:
+                seen_senders.add(sender_key)
+                sender_info = {
+                    'name': name,
+                    'email': email,
+                    'identifier': sender_key
+                }
+                senders_info['senders'].append(sender_info)
+    
+    # 如果没有找到，尝试匹配邮箱地址
+    if not senders_info['senders']:
+        email_pattern = r'\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b'
+        matches = re.finditer(email_pattern, text)
+        for match in matches:
+            email = match.group(1)
+            if email not in seen_senders:
+                seen_senders.add(email)
+                sender_info = {
+                    'name': '',
+                    'email': email,
+                    'identifier': email
+                }
+                senders_info['senders'].append(sender_info)
+    
+    senders_info['sender_count'] = len(senders_info['senders'])
+    if senders_info['senders']:
+        senders_info['primary_sender'] = senders_info['senders'][0]
+    
+    return senders_info if senders_info['senders'] else {}
 
 
 def extract_time_by_keywords(text: str, keywords: list) -> Optional[datetime]:
@@ -799,29 +948,81 @@ def extract_time_range(
                 pass
             return start_dt, end_dt, "命令行参数指定"
     
-    # 优先级2：工单时间或邮件时间
+    # 优先级2：工单时间或邮件时间（支持多个时间）
     time_info = ticket_info.get('time_info', {})
     if time_info.get('time_type') in ['ticket_time', 'email_time']:
-        base_time = time_info.get('ticket_time') or time_info.get('email_time')
-        if base_time:
+        # 优先使用多个时间中的最早和最晚时间
+        times_list = []
+        if time_info.get('ticket_times'):
+            times_list.extend(time_info['ticket_times'])
+        if time_info.get('email_times'):
+            times_list.extend(time_info['email_times'])
+        
+        # 如果没有多个时间，使用单个时间（兼容旧格式）
+        if not times_list:
+            base_time = time_info.get('ticket_time') or time_info.get('email_time')
+            if base_time:
+                times_list = [base_time]
+        
+        if times_list:
+            # 使用最早和最晚时间
+            times_list.sort()
+            earliest_time = times_list[0]
+            latest_time = times_list[-1]
+            
             # 检查基础时间是否在未来
-            if base_time > now + timedelta(hours=1):
+            if latest_time > now + timedelta(hours=1):
                 # 如果基础时间在未来，仍然使用该时间，但给出提示
                 # 不自动改为最近24小时
                 pass
-            # 扩大时间范围到前后2小时，提高查询成功率
-            start_dt = base_time - timedelta(hours=2)
-            end_dt = base_time + timedelta(hours=2)
+            
+            # 扩大时间范围：从最早时间前2小时到最晚时间后2小时
+            start_dt = earliest_time - timedelta(hours=2)
+            end_dt = latest_time + timedelta(hours=2)
+            
             # 确保不超出当前时间
             if end_dt > now:
                 end_dt = now
                 # 如果结束时间调整了，开始时间也要相应调整
                 if start_dt < end_dt - timedelta(hours=2):
                     start_dt = end_dt - timedelta(hours=2)
-            return start_dt, end_dt, f"工单/邮件时间（{time_info.get('time_type')}）前后2小时"
+            
+            time_source_desc = f"工单/邮件时间（{time_info.get('time_type')}）"
+            if len(times_list) > 1:
+                time_source_desc += f"，包含{len(times_list)}个时间点"
+            time_source_desc += "前后2小时"
+            return start_dt, end_dt, time_source_desc
     
-    # 优先级3：问题发生时间
-    if time_info.get('problem_time'):
+    # 优先级3：问题发生时间（支持多个时间）
+    if time_info.get('problem_times'):
+        problem_times = time_info['problem_times']
+        problem_times.sort()
+        earliest_time = problem_times[0]
+        latest_time = problem_times[-1]
+        
+        # 检查基础时间是否在未来
+        if latest_time > now + timedelta(hours=1):
+            # 如果基础时间在未来，仍然使用该时间，但给出提示
+            # 不自动改为最近24小时
+            pass
+        
+        # 扩大时间范围：从最早时间前2小时到最晚时间后2小时
+        start_dt = earliest_time - timedelta(hours=2)
+        end_dt = latest_time + timedelta(hours=2)
+        
+        # 确保不超出当前时间
+        if end_dt > now:
+            end_dt = now
+            # 如果结束时间调整了，开始时间也要相应调整
+            if start_dt < end_dt - timedelta(hours=2):
+                start_dt = end_dt - timedelta(hours=2)
+        
+        time_source_desc = "问题发生时间"
+        if len(problem_times) > 1:
+            time_source_desc += f"（包含{len(problem_times)}个时间点）"
+        time_source_desc += "前后2小时"
+        return start_dt, end_dt, time_source_desc
+    elif time_info.get('problem_time'):  # 兼容旧格式
         base_time = time_info.get('problem_time')
         # 检查基础时间是否在未来
         if base_time > now + timedelta(hours=1):

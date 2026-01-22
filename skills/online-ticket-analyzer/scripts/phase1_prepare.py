@@ -138,6 +138,37 @@ def init_phase_1(
         print("  ⚠️  SigNoz配置未加载，将使用默认配置")
         signoz_config = {}  # 使用空字典，避免后续错误
     
+    # 检查是否需要AI分析多发送方和多时间
+    senders_info = ticket_info.get('senders_info', {})
+    time_info = ticket_info.get('time_info', {})
+    needs_ai_analysis = False
+    ai_analysis_notes = []
+    
+    # 检查是否有多个发送方
+    if senders_info.get('sender_count', 0) > 1:
+        needs_ai_analysis = True
+        ai_analysis_notes.append(f"检测到 {senders_info['sender_count']} 个发送方，需要AI分析邮件沟通记录")
+    
+    # 检查是否有多个时间
+    all_times_count = len(time_info.get('all_times', []))
+    if all_times_count > 1:
+        needs_ai_analysis = True
+        ai_analysis_notes.append(f"检测到 {all_times_count} 个时间点，需要AI分析确定关键时间范围")
+    
+    # 如果检测到多发送方或多时间，提示AI进行分析
+    if needs_ai_analysis:
+        print("\n🤖 检测到多发送方或多时间，需要AI分析...")
+        for note in ai_analysis_notes:
+            print(f"  ⚠️  {note}")
+        print("\n  📋 AI分析任务：")
+        print("     1. 分析邮件沟通记录，理解对话流程")
+        print("     2. 识别关键时间点（问题发生时间、邮件发送时间等）")
+        print("     3. 识别主要发送方和关键参与者")
+        print("     4. 确定最相关的时间范围用于查询")
+        print("     5. 理解邮件上下文，提取关键问题信息")
+        print("\n  💡 提示：AI应该基于邮件沟通记录的整体上下文进行分析，")
+        print("     而不仅仅是简单的模式匹配。")
+    
     # 构建工单上下文
     start_time, end_time, time_source = time_range
     ticket_context = {
@@ -152,6 +183,8 @@ def init_phase_1(
             'end_display': format_datetime(end_time) if end_time else None,
             'source': time_source
         },
+        'needs_ai_analysis': needs_ai_analysis,
+        'ai_analysis_notes': ai_analysis_notes,
         'created_at': datetime.now().isoformat()
     }
     
