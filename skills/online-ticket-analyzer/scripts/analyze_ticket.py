@@ -217,10 +217,21 @@ def main():
         # 生成MCP调用指令
         print("\n📋 生成MCP调用指令...")
         # 注意：generate_mcp_instructions内部会验证时间范围，如果时间在未来会自动调整为最近24小时
+        # 支持迭代查询：如果存在之前的查询结果，可以从中提取特征信息并更新查询条件
+        previous_results = None
+        try:
+            from mcp_handler import load_mcp_results
+            previous_results = load_mcp_results(args.project_path, ticket_id)
+            if previous_results:
+                print("  🔄 检测到之前的查询结果，将基于特征信息生成更精确的查询", file=sys.stderr)
+        except Exception:
+            pass  # 如果没有之前的查询结果，继续使用基础查询
+        
         instructions_file = generate_mcp_instructions(
             ticket_context,
             args.project_path,
-            ticket_id
+            ticket_id,
+            previous_results=previous_results
         )
         
         if instructions_file:
