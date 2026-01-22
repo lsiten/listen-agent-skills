@@ -463,6 +463,24 @@ def analyze_prevalence(
     # 提取特征
     features = extract_prevalence_features(ticket_info, log_analysis)
     
+    # 即使特征信息不足，也保存已提取的特征信息
+    ticket_dir = get_ticket_dir(project_path, ticket_id)
+    features_file = ticket_dir / 'prevalence_features.json'
+    
+    features_data = {
+        'ticket_id': ticket_id,
+        'features': features,
+        'extracted_at': datetime.now().isoformat(),
+        'source': {
+            'ticket_info': ticket_info,
+            'log_analysis_summary': {
+                'error_count': log_analysis.get('error_count', 0),
+                'error_types': log_analysis.get('error_types', {}),
+                'services': log_analysis.get('services', [])
+            } if log_analysis else {}
+        }
+    }
+    
     if not any([
         features.get('geo'),
         features.get('environment'),
@@ -472,10 +490,24 @@ def analyze_prevalence(
         features.get('service_name')
     ]):
         print("  ⚠️  无法提取足够的特征信息进行普遍性分析")
+        # 仍然保存特征信息
+        if save_json_file(features_file, features_data):
+            print(f"  ✅ 特征信息已保存（即使信息不足）: {features_file}")
+        # 同时更新ticket_context.json
+        ticket_context_file = ticket_dir / 'ticket_context.json'
+        ticket_context_data = load_json_file(ticket_context_file)
+        if ticket_context_data:
+            if 'prevalence_features' not in ticket_context_data:
+                ticket_context_data['prevalence_features'] = {}
+            ticket_context_data['prevalence_features'] = features
+            ticket_context_data['prevalence_features_extracted_at'] = datetime.now().isoformat()
+            save_json_file(ticket_context_file, ticket_context_data)
         return {
             'is_prevalent': False,
             'prevalence_level': 'unknown',
-            'reason': '特征信息不足'
+            'reason': '特征信息不足',
+            'features': features,
+            'features_file': str(features_file)
         }
     
     print(f"  ✅ 提取到特征信息:")
@@ -489,6 +521,24 @@ def analyze_prevalence(
         print(f"     - 浏览器: {features['browser_info'].get('name', '')} {features['browser_info'].get('version', '')}")
     if features.get('api_path'):
         print(f"     - 接口路径: {features['api_path']}")
+    
+    # 保存特征信息（特征信息足够的情况）
+    print("  💾 保存特征信息...")
+    if save_json_file(features_file, features_data):
+        print(f"  ✅ 特征信息已保存: {features_file}")
+    else:
+        print("  ⚠️  特征信息保存失败")
+    
+    # 同时更新ticket_context.json，将特征信息也保存到那里
+    ticket_context_file = ticket_dir / 'ticket_context.json'
+    ticket_context_data = load_json_file(ticket_context_file)
+    if ticket_context_data:
+        if 'prevalence_features' not in ticket_context_data:
+            ticket_context_data['prevalence_features'] = {}
+        ticket_context_data['prevalence_features'] = features
+        ticket_context_data['prevalence_features_extracted_at'] = datetime.now().isoformat()
+        if save_json_file(ticket_context_file, ticket_context_data):
+            print(f"  ✅ 特征信息已更新到工单上下文")
     
     # 构建普遍性查询
     time_range = ticket_context.get('time_range', {})
@@ -543,6 +593,7 @@ def analyze_prevalence(
         return {
             'instructions_file': str(prevalence_instructions_file),
             'features': features,
+            'features_file': str(features_file),
             'status': 'pending_ai_execution'
         }
     else:
@@ -550,7 +601,9 @@ def analyze_prevalence(
         return {
             'is_prevalent': False,
             'prevalence_level': 'unknown',
-            'reason': '指令生成失败'
+            'reason': '指令生成失败',
+            'features': features,
+            'features_file': str(features_file) if 'features_file' in locals() else None
         }
 
 

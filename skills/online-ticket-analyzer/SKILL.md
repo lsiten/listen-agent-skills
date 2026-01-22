@@ -225,7 +225,8 @@ python scripts/analyze_ticket.py \
     └── {ticket_id}/              # 每个工单独立目录
         ├── mcp_instructions.json # MCP调用指令（阶段1生成）
         ├── mcp_results.json      # MCP查询结果（AI执行后保存）
-        ├── ticket_context.json   # 工单上下文（阶段1保存）
+        ├── ticket_context.json   # 工单上下文（阶段1保存，阶段2会更新特征信息）
+        ├── prevalence_features.json      # 工单特征信息（阶段2提取并保存）
         ├── prevalence_instructions.json  # 普遍性查询指令（阶段2生成）
         ├── prevalence_results.json       # 普遍性查询结果（AI执行后保存）
         └── solution.md           # 解决方案文档（阶段2生成，如果是普遍性问题会特别标注）
