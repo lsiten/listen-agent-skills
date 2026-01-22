@@ -5,6 +5,8 @@ SigNoz数据结构定义模块
 基于@ccint/signoz包的数据结构说明
 """
 
+from typing import Optional
+
 # SigNoz字段上下文类型
 FIELD_CONTEXT_RESOURCE = 'resource'  # 资源级别字段
 FIELD_CONTEXT_ATTRIBUTES = 'attributes'  # 属性级别字段

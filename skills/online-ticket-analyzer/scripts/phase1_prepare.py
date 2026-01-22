@@ -115,17 +115,28 @@ def init_phase_1(
     print("\n📂 加载项目全局上下文...")
     project_context = load_project_context(project_path)
     if project_context:
-        print(f"  ✅ 已加载项目上下文（{len(project_context.get('services', []))} 个服务）")
+        services = project_context.get('services', [])
+        print(f"  ✅ 已加载项目上下文（{len(services)} 个服务）")
+        if services:
+            print(f"     服务列表: {', '.join(services[:5])}{'...' if len(services) > 5 else ''}")
     else:
-        print("  ⚠️  项目上下文未加载")
+        print("  ⚠️  项目上下文未加载，将使用默认配置")
+        project_context = {}  # 使用空字典，避免后续错误
     
     # 加载SigNoz配置
     print("\n📂 加载SigNoz配置...")
     signoz_config = load_signoz_config(project_path)
     if signoz_config:
+        init_location = signoz_config.get('init_code_location', '')
+        service_names = signoz_config.get('service_names', {})
         print(f"  ✅ 已加载SigNoz配置")
+        if init_location:
+            print(f"     初始化代码: {init_location}")
+        if service_names:
+            print(f"     服务名称: {', '.join(list(service_names.keys())[:3])}{'...' if len(service_names) > 3 else ''}")
     else:
-        print("  ⚠️  SigNoz配置未加载")
+        print("  ⚠️  SigNoz配置未加载，将使用默认配置")
+        signoz_config = {}  # 使用空字典，避免后续错误
     
     # 构建工单上下文
     start_time, end_time, time_source = time_range

@@ -9,6 +9,7 @@ import argparse
 import sys
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, timedelta
 
 # 导入各个模块
 from utils import generate_ticket_id
@@ -141,7 +142,7 @@ def main():
     
     # 提取工单信息
     print("\n📋 解析工单信息...")
-    ticket_info = extract_ticket_info(user_input_text)
+    ticket_info = extract_ticket_info(user_input_text, project_path=args.project_path)
     
     # 如果命令行指定了服务，添加到工单信息中
     if args.service:
@@ -171,15 +172,36 @@ def main():
     print(f"  ✅ 时间范围: {time_source}")
     if start_time and end_time:
         print(f"     {start_time.strftime('%Y-%m-%d %H:%M:%S')} - {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # 检查时间是否在未来
+        now = datetime.now()
+        if end_time > now + timedelta(hours=1):
+            print(f"  ⚠️  注意：查询结束时间在未来（当前时间: {now.strftime('%Y-%m-%d %H:%M:%S')}）")
+            print(f"     如果这是测试数据或系统时间设置不同，可以继续使用")
+            print(f"     否则请检查时间是否正确")
     
     # 阶段0：首次使用检查
     if not args.skip_phase0:
-        context_complete, config_complete = init_phase_0(args.project_path)
+        print("\n" + "="*60)
+        print("📋 阶段0：首次使用检查")
+        print("="*60)
+        context_complete, config_complete = init_phase_0(args.project_path, skip_if_complete=False)
         
+        # 如果配置不完整，给出明确提示
         if not context_complete or not config_complete:
-            print("\n⚠️  项目上下文或SigNoz配置不完整")
-            print("   请按照提示完成初始化，然后重新运行分析")
+            print("\n" + "="*60)
+            print("⚠️  配置不完整，需要完成初始化")
+            print("="*60)
+            if not context_complete:
+                print("\n❌ 项目上下文不完整")
+                print("   请按照上述提示，让AI通读项目代码生成完整的项目上下文")
+            if not config_complete:
+                print("\n❌ SigNoz配置不完整")
+                print("   请按照上述提示，让AI通读项目代码生成完整的SigNoz配置")
+            print("\n💡 提示：完成配置生成后，重新运行此命令继续分析")
             sys.exit(1)
+        else:
+            print("\n✅ 阶段0检查完成，配置信息完整")
     else:
         print("\n⏭️  跳过阶段0（首次使用检查）")
     
@@ -194,6 +216,7 @@ def main():
         
         # 生成MCP调用指令
         print("\n📋 生成MCP调用指令...")
+        # 注意：generate_mcp_instructions内部会验证时间范围，如果时间在未来会自动调整为最近24小时
         instructions_file = generate_mcp_instructions(
             ticket_context,
             args.project_path,
@@ -202,23 +225,31 @@ def main():
         
         if instructions_file:
             print(f"  ✅ MCP调用指令已生成: {instructions_file}")
-            print("\n" + "="*60)
-            print("⏳ 等待AI执行MCP查询...")
-            print("="*60)
-            print("\n请执行以下操作：")
-            print("1. 读取MCP指令文件:", instructions_file)
-            print("2. 根据指令调用SigNoz MCP工具")
-            print("3. 将查询结果保存到:", instructions_file.parent / "mcp_results.json")
-            print("\n完成后，运行以下命令继续分析：")
-            print(f"  python analyze_ticket.py --ticket-id {ticket_id} --project-path {args.project_path} --skip-phase0 --skip-phase1")
+            
+            # 检查是否已有MCP结果
+            from mcp_handler import load_mcp_results
+            mcp_results = load_mcp_results(args.project_path, ticket_id)
+            
+            if mcp_results:
+                print("  ✅ 检测到已有MCP查询结果，将直接进入阶段2")
+            else:
+                print("\n" + "="*60)
+                print("⏳ 等待AI执行MCP查询...")
+                print("="*60)
+                print("\n请执行以下操作：")
+                print("1. 读取MCP指令文件:", instructions_file)
+                print("2. 根据指令调用SigNoz MCP工具")
+                print("3. 将查询结果保存到:", instructions_file.parent / "mcp_results.json")
+                print("\n完成后，运行以下命令继续分析：")
+                print(f"  python {Path(__file__).name} --ticket-id {ticket_id} --project-path {args.project_path} --skip-phase0 --skip-phase1")
+                
+                # 如果跳过阶段2，在这里退出
+                if args.skip_phase2:
+                    print("\n✅ 阶段1完成，MCP指令已生成")
+                    return
         else:
             print("  ⚠️  MCP调用指令生成失败")
             sys.exit(1)
-        
-        # 如果跳过阶段2，在这里退出
-        if args.skip_phase2:
-            print("\n✅ 阶段1完成，MCP指令已生成")
-            return
     else:
         print("\n⏭️  跳过阶段1（准备与指令生成）")
         # 需要加载已有的工单上下文

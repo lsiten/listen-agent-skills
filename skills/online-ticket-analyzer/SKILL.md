@@ -151,13 +151,22 @@ python scripts/analyze_ticket.py \
 
 系统会自动检查项目上下文和SigNoz配置信息：
 
+**⚠️ 重要**：项目上下文和SigNoz配置是从整体项目视角生成的，不是针对特定工单。这些配置是全局的、可复用的，适用于所有工单分析。
+
 1. **检查文件存在性**：
-   - `.production-issue-analyzer/project_context.json` - 项目全局上下文
-   - `.production-issue-analyzer/signoz_config.json` - SigNoz配置信息
+   - `.production-issue-analyzer/project_context.json` - 项目全局上下文（所有工单共享）
+   - `.production-issue-analyzer/signoz_config.json` - SigNoz配置信息（所有工单共享）
 
 2. **如果文件不存在**：
-   - 通过AI通读项目代码，生成项目上下文（服务列表、关键文件、架构信息等）
-   - 通过AI通读项目代码，生成SigNoz配置信息（初始化代码位置、字段、服务名等）
+   - 通过AI通读整个项目代码，从整体项目视角生成项目上下文：
+     * 包含所有服务的完整列表（不仅仅是当前工单涉及的服务）
+     * 包含所有关键文件和目录结构
+     * 包含完整的架构和技术栈信息
+   - 通过AI通读整个项目代码，从整体项目视角生成SigNoz配置信息：
+     * 包含所有API baseUrl配置（不仅仅是当前工单需要的）
+     * 包含所有环境变量的实际值
+     * 包含项目中使用的所有字段
+     * 包含所有服务的名称映射
 
 3. **如果文件存在但信息不全**：
    - 通过脚本扫描补充缺失的项目上下文信息

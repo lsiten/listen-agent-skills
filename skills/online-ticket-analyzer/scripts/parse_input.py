@@ -103,12 +103,13 @@ def process_image(image_path: str) -> Optional[str]:
         return None
 
 
-def extract_ticket_info(user_input: str) -> Dict[str, Any]:
+def extract_ticket_info(user_input: str, project_path: Optional[str] = None) -> Dict[str, Any]:
     """
     从用户输入中提取工单信息
     
     Args:
         user_input: 用户输入文本
+        project_path: 项目路径（用于获取baseurl配置，用于接口路径识别）
     
     Returns:
         提取的工单信息字典
@@ -145,8 +146,8 @@ def extract_ticket_info(user_input: str) -> Dict[str, Any]:
     if device_info:
         ticket_info['device_info'] = device_info
     
-    # 提取接口信息
-    api_info = extract_api_info(user_input)
+    # 提取接口信息（传入project_path以获取baseurl）
+    api_info = extract_api_info(user_input, project_path)
     if api_info:
         ticket_info['api_info'] = api_info
     
@@ -264,27 +265,197 @@ def extract_device_info(text: str) -> Dict[str, Any]:
     return device_info
 
 
-def extract_api_info(text: str) -> Dict[str, Any]:
-    """提取接口信息"""
+def trace_api_pathname_from_code(project_root, api_call_text: str) -> Optional[Dict[str, Any]]:
+    """
+    从代码调用位置追踪pathname和baseurl（供AI使用）
+    
+    这是一个辅助函数，帮助AI理解如何追踪接口路径
+    实际追踪需要AI通读代码完成
+    """
+    from pathlib import Path
+    from phase0_init import scan_environment_variables
+    import re
+    from urllib.parse import urlparse
+    
+    # 从代码中提取pathname
+    pathname_patterns = [
+        r'\.(?:post|get|put|delete|patch)\s*\(\s*["\']([^"\']+)["\']',
+        r'\.(?:post|get|put|delete|patch)\s*\(\s*`([^`]+)`',
+    ]
+    
+    pathname = None
+    for pattern in pathname_patterns:
+        match = re.search(pattern, api_call_text)
+        if match:
+            pathname = match.group(1)
+            if pathname and pathname.startswith('/'):
+                break
+    
+    if not pathname:
+        return None
+    
+    # 查找环境变量引用
+    env_var_patterns = [
+        r'import\.meta\.env\.([A-Z_][A-Z0-9_]*)',
+        r'process\.env\.([A-Z_][A-Z0-9_]*)',
+    ]
+    
+    env_vars = scan_environment_variables(project_root)
+    baseurl = None
+    
+    for pattern in env_var_patterns:
+        matches = re.findall(pattern, api_call_text)
+        for env_key in matches:
+            # 尝试多种可能的key名称
+            possible_keys = [
+                env_key,
+                f'VITE_{env_key}',
+                env_key.replace('VITE_', ''),
+            ]
+            for key in possible_keys:
+                if key in env_vars:
+                    baseurl = env_vars[key]
+                    break
+            if baseurl:
+                break
+        if baseurl:
+            break
+    
+    if pathname and baseurl:
+        # 解析baseurl，提取路径部分
+        try:
+            parsed = urlparse(baseurl)
+            base_path = parsed.path
+            if base_path and base_path != '/':
+                full_path = base_path.rstrip('/') + pathname
+            else:
+                full_path = pathname
+            return {
+                'pathname': pathname,
+                'baseurl': baseurl,
+                'full_path': full_path
+            }
+        except Exception:
+            return {'pathname': pathname, 'baseurl': baseurl}
+    
+    return {'pathname': pathname} if pathname else None
+
+
+def extract_api_info(text: str, project_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    提取接口信息
+    
+    支持从文本中提取pathname，并通过项目配置组合完整URL
+    
+    Args:
+        text: 输入文本
+        project_path: 项目路径（用于获取baseurl配置）
+    
+    Returns:
+        接口信息字典，包含api_path, full_url, pathname等
+    """
     api_info = {}
     
-    # 接口路径
+    # 获取baseurl（如果提供了项目路径）
+    base_url = None
+    api_baseurls = {}
+    if project_path:
+        try:
+            from utils import get_analyzer_dir, load_json_file
+            from pathlib import Path
+            analyzer_dir = get_analyzer_dir(project_path)
+            signoz_config_file = analyzer_dir / 'signoz_config.json'
+            if signoz_config_file.exists():
+                signoz_config = load_json_file(signoz_config_file)
+                if signoz_config:
+                    base_url = signoz_config.get('base_url')
+                    api_baseurls = signoz_config.get('api_baseurls', {})
+        except Exception:
+            pass
+    
+    # 接口路径模式（支持完整URL和pathname）
     api_path_patterns = [
+        # 完整URL模式
+        r'https?://[^\s,，]+(/[^\s,，]*)',  # http://example.com/api/path
+        r'接口[:：]\s*(https?://[^\s,，]+)',  # 接口: http://...
+        r'[Aa][Pp][Ii][:：]\s*(https?://[^\s,，]+)',  # API: http://...
+        # pathname模式（支持各种格式）
         r'接口[:：]\s*([^\s,，]+)',
         r'[Aa][Pp][Ii][:：]\s*([^\s,，]+)',
         r'[Aa][Pp][Ii][Pp]ath[:：]\s*([^\s,，]+)',
-        r'[/][a-zA-Z0-9/_-]+'  # 直接匹配路径格式
+        r'pathname[:：]\s*([^\s,，]+)',
+        r'路径[:：]\s*([^\s,，]+)',
+        # 代码调用模式（如 .post('/revert_dir_list', ...)）
+        r'\.(?:post|get|put|delete|patch)\s*\(\s*["\']([^"\']+)["\']',
+        r'\.(?:post|get|put|delete|patch)\s*\(\s*`([^`]+)`',
+        # 直接匹配路径格式
+        r'[/][a-zA-Z0-9/_-]+'  # /api/path
     ]
+    
+    full_url = None
+    api_path = None
+    
     for pattern in api_path_patterns:
         match = re.search(pattern, text)
         if match:
-            api_path = match.group(1) if match.lastindex else match.group(0)
-            if api_path.startswith('/'):
-                api_info['api_path'] = api_path
+            matched_text = match.group(1) if match.lastindex else match.group(0)
+            
+            # 如果是完整URL
+            if matched_text.startswith('http://') or matched_text.startswith('https://'):
+                full_url = matched_text
+                # 提取pathname部分
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(full_url)
+                    api_path = parsed.path
+                    if not api_path.startswith('/'):
+                        api_path = '/' + api_path
+                except Exception:
+                    api_path = matched_text
+                break
+            
+            # 如果是pathname
+            elif matched_text.startswith('/'):
+                api_path = matched_text
+                # 如果有baseurl，组合成完整URL
+                if base_url:
+                    # 确保base_url不以/结尾，pathname以/开头
+                    base = base_url.rstrip('/')
+                    path = api_path if api_path.startswith('/') else '/' + api_path
+                    full_url = base + path
                 break
     
+    # 保存结果
+    if api_path:
+        api_info['api_path'] = api_path
+        api_info['pathname'] = api_path  # pathname就是去掉baseurl的路径
+        
+        # 如果pathname已识别，但还没有完整路径，尝试从api_baseurls中查找
+        if not full_url and api_baseurls:
+            # 尝试匹配可能的baseUrl（需要AI通读代码确定，这里只做辅助）
+            # 优先使用base_url，如果没有则尝试从api_baseurls中查找
+            if base_url:
+                from urllib.parse import urlparse
+                try:
+                    parsed = urlparse(base_url)
+                    base_path = parsed.path
+                    if base_path and base_path != '/':
+                        full_path = base_path.rstrip('/') + api_path
+                    else:
+                        full_path = api_path
+                    api_info['full_path'] = full_path
+                except Exception:
+                    pass
+    
+    if full_url:
+        api_info['full_url'] = full_url
+    if base_url:
+        api_info['base_url'] = base_url
+    if api_baseurls:
+        api_info['api_baseurls'] = api_baseurls
+    
     # 功能名称（推断接口）
-    function_keywords = ['登录', '注册', '上传', '下载', '支付', '查询', '删除', '更新']
+    function_keywords = ['登录', '注册', '上传', '下载', '支付', '查询', '删除', '更新', '恢复', '撤销']
     for keyword in function_keywords:
         if keyword in text:
             api_info['function_name'] = keyword
@@ -374,6 +545,8 @@ def parse_time_string(time_str: str, default_date: Optional[datetime] = None) ->
     - 完整时间：2025-01-20 10:00:00
     - 仅时间：10:00:00（假设为今天）
     - 关键词：今天、昨天、刚才、刚刚、最近
+    
+    注意：如果解析出的时间在未来，会给出警告但不会拒绝
     """
     time_str = time_str.strip()
     
@@ -401,9 +574,46 @@ def parse_time_string(time_str: str, default_date: Optional[datetime] = None) ->
     
     # 尝试使用dateutil解析
     try:
+        # 如果时间字符串看起来像日期（包含年份），尝试解析
+        # 如果只有时间部分，使用default_date或当前日期
         dt = date_parser.parse(time_str, default=default_date or now)
+        
+        # 检查是否是未来时间（超过当前时间1小时以上认为是未来）
+        # 但不要拒绝，因为可能是测试数据或系统时间设置不同
+        if dt > now + timedelta(hours=1):
+            # 如果时间在未来超过1小时，给出警告但不拒绝
+            # 允许继续使用，因为可能是：
+            # 1. 测试数据
+            # 2. 系统时间设置不同
+            # 3. 用户明确指定的时间
+            pass
+        
         return dt
     except Exception:
+        # 如果dateutil解析失败，尝试简单的日期格式匹配
+        # 匹配格式：YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD
+        date_patterns = [
+            r'(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2}):(\d{1,2})',  # 2025-01-13 17:34:01
+            r'(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2})',  # 2025-01-13 17:34
+            r'(\d{4})-(\d{1,2})-(\d{1,2})',  # 2025-01-13
+        ]
+        
+        for pattern in date_patterns:
+            match = re.match(pattern, time_str)
+            if match:
+                try:
+                    groups = match.groups()
+                    if len(groups) >= 3:
+                        year = int(groups[0])
+                        month = int(groups[1])
+                        day = int(groups[2])
+                        hour = int(groups[3]) if len(groups) > 3 else 0
+                        minute = int(groups[4]) if len(groups) > 4 else 0
+                        second = int(groups[5]) if len(groups) > 5 else 0
+                        return datetime(year, month, day, hour, minute, second)
+                except (ValueError, IndexError):
+                    continue
+        
         pass
     
     return None
@@ -443,6 +653,9 @@ def extract_time_range(
     3. 问题发生时间（前后30分钟）
     4. 默认：最近N小时
     
+    注意：如果解析出的时间在未来，会使用该时间，不会自动改为最近24小时
+    因为可能是测试数据或系统时间设置不同
+    
     Args:
         ticket_info: 工单信息
         start_time: 命令行指定的开始时间
@@ -452,11 +665,18 @@ def extract_time_range(
     Returns:
         (开始时间, 结束时间, 时间来源说明)
     """
+    now = datetime.now()
+    
     # 优先级1：命令行参数
     if start_time and end_time:
         start_dt = parse_time_string(start_time)
         end_dt = parse_time_string(end_time)
         if start_dt and end_dt:
+            # 检查时间是否在未来
+            if end_dt > now + timedelta(hours=1):
+                # 如果结束时间在未来，给出提示但继续使用
+                # 不自动改为最近24小时，因为可能是用户明确指定的时间
+                pass
             return start_dt, end_dt, "命令行参数指定"
     
     # 优先级2：工单时间或邮件时间
@@ -464,19 +684,42 @@ def extract_time_range(
     if time_info.get('time_type') in ['ticket_time', 'email_time']:
         base_time = time_info.get('ticket_time') or time_info.get('email_time')
         if base_time:
-            start_dt = base_time - timedelta(minutes=30)
-            end_dt = base_time + timedelta(minutes=30)
-            return start_dt, end_dt, f"工单/邮件时间（{time_info.get('time_type')}）前后30分钟"
+            # 检查基础时间是否在未来
+            if base_time > now + timedelta(hours=1):
+                # 如果基础时间在未来，仍然使用该时间，但给出提示
+                # 不自动改为最近24小时
+                pass
+            # 扩大时间范围到前后2小时，提高查询成功率
+            start_dt = base_time - timedelta(hours=2)
+            end_dt = base_time + timedelta(hours=2)
+            # 确保不超出当前时间
+            if end_dt > now:
+                end_dt = now
+                # 如果结束时间调整了，开始时间也要相应调整
+                if start_dt < end_dt - timedelta(hours=2):
+                    start_dt = end_dt - timedelta(hours=2)
+            return start_dt, end_dt, f"工单/邮件时间（{time_info.get('time_type')}）前后2小时"
     
     # 优先级3：问题发生时间
     if time_info.get('problem_time'):
         base_time = time_info.get('problem_time')
-        start_dt = base_time - timedelta(minutes=30)
-        end_dt = base_time + timedelta(minutes=30)
-        return start_dt, end_dt, "问题发生时间前后30分钟"
+        # 检查基础时间是否在未来
+        if base_time > now + timedelta(hours=1):
+            # 如果基础时间在未来，仍然使用该时间，但给出提示
+            # 不自动改为最近24小时
+            pass
+        # 扩大时间范围到前后2小时，提高查询成功率
+        start_dt = base_time - timedelta(hours=2)
+        end_dt = base_time + timedelta(hours=2)
+        # 确保不超出当前时间
+        if end_dt > now:
+            end_dt = now
+            # 如果结束时间调整了，开始时间也要相应调整
+            if start_dt < end_dt - timedelta(hours=2):
+                start_dt = end_dt - timedelta(hours=2)
+        return start_dt, end_dt, "问题发生时间前后2小时"
     
     # 优先级4：默认时间范围
-    now = datetime.now()
     start_dt = now - timedelta(hours=default_range_hours)
     end_dt = now
     return start_dt, end_dt, f"默认：最近{default_range_hours}小时"

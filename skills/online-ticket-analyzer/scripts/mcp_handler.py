@@ -37,6 +37,8 @@ def generate_mcp_instructions(
     Returns:
         保存的指令文件路径，如果生成失败则返回None
     """
+    from datetime import datetime, timedelta
+    
     ticket_dir = get_ticket_dir(project_path, ticket_id)
     instructions_file = ticket_dir / 'mcp_instructions.json'
     
@@ -44,6 +46,69 @@ def generate_mcp_instructions(
     time_range = ticket_context.get('time_range', {})
     project_context = ticket_context.get('project_context', {})
     signoz_config = ticket_context.get('signoz_config', {})
+    
+    # 验证和优化时间范围
+    start_ms = time_range.get('start')
+    end_ms = time_range.get('end')
+    now_ms = int(datetime.now().timestamp() * 1000)
+    
+    # 检查1：如果结束时间在未来（超过当前时间1小时），使用最近24小时
+    if end_ms and end_ms > now_ms + 3600000:  # 1小时 = 3600000毫秒
+        print(f"\n⚠️  检测到查询时间在未来（结束时间: {time_range.get('end_display')}）")
+        print(f"   当前时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"   自动调整为查询最近24小时的数据")
+        
+        # 使用最近24小时
+        end_ms = now_ms
+        start_ms = now_ms - (24 * 60 * 60 * 1000)  # 24小时前
+        
+        # 更新time_range
+        time_range = {
+            'start': start_ms,
+            'end': end_ms,
+            'start_display': datetime.fromtimestamp(start_ms / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+            'end_display': datetime.fromtimestamp(end_ms / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+            'source': '自动调整：未来时间改为最近24小时'
+        }
+        
+        # 更新ticket_context中的time_range
+        ticket_context['time_range'] = time_range
+    
+    # 检查2：如果时间范围太小（小于2小时），自动扩大
+    if start_ms and end_ms:
+        duration_ms = end_ms - start_ms
+        duration_hours = duration_ms / (1000 * 60 * 60)
+        
+        # 如果时间范围小于2小时，扩大到前后2小时
+        if duration_hours < 2:
+            base_time_ms = start_ms + (duration_ms / 2)  # 基础时间（中间点）
+            # 扩大到前后2小时
+            expanded_start_ms = base_time_ms - (2 * 60 * 60 * 1000)  # 2小时前
+            expanded_end_ms = base_time_ms + (2 * 60 * 60 * 1000)  # 2小时后
+            
+            # 确保不超出当前时间
+            if expanded_end_ms > now_ms:
+                expanded_end_ms = now_ms
+                # 如果结束时间调整了，开始时间也要相应调整
+                if expanded_start_ms < expanded_end_ms - (2 * 60 * 60 * 1000):
+                    expanded_start_ms = expanded_end_ms - (2 * 60 * 60 * 1000)
+            
+            print(f"\n⚠️  检测到时间范围较小（{duration_hours:.1f}小时），自动扩大为前后2小时")
+            print(f"   原时间范围: {time_range.get('start_display')} - {time_range.get('end_display')}")
+            
+            # 更新time_range
+            time_range = {
+                'start': int(expanded_start_ms),
+                'end': int(expanded_end_ms),
+                'start_display': datetime.fromtimestamp(expanded_start_ms / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                'end_display': datetime.fromtimestamp(expanded_end_ms / 1000).strftime('%Y-%m-%d %H:%M:%S'),
+                'source': f'{time_range.get("source", "时间范围")}（已扩大为前后2小时）'
+            }
+            
+            print(f"   新时间范围: {time_range.get('start_display')} - {time_range.get('end_display')}")
+            
+            # 更新ticket_context中的time_range
+            ticket_context['time_range'] = time_range
     
     # 构建MCP指令
     instructions = {
@@ -64,6 +129,7 @@ def generate_mcp_instructions(
     queries = []
     
     # 查询1：获取服务列表（必须，优先级最高）
+    # 使用验证后的时间范围
     if time_range.get('start') and time_range.get('end'):
         queries.append({
             'priority': 1,
@@ -100,9 +166,14 @@ def generate_mcp_instructions(
     
     # 查询3：按服务查询日志
     services = ticket_info.get('services', [])
-    if not services and project_context:
-        # 如果没有指定服务，使用项目上下文中的服务列表
-        services = project_context.get('services', [])
+    if not services:
+        # 如果没有指定服务，优先从SigNoz配置中获取
+        if signoz_config and signoz_config.get('service_names'):
+            service_names = signoz_config.get('service_names', {})
+            services = list(service_names.keys())
+        # 如果还是没有，使用项目上下文中的服务列表
+        if not services and project_context:
+            services = project_context.get('services', [])
     
     if services and time_range.get('start') and time_range.get('end'):
         for service in services[:5]:  # 限制服务数量
@@ -254,6 +325,23 @@ def build_error_logs_query(
         }
         query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(user_filter)
     
+    # 添加接口信息过滤（如果有）
+    # 注意：实际字段名是request.pathname，不是api_path
+    # pathname应该是去掉baseurl的路径部分
+    api_info = ticket_info.get('api_info', {})
+    # 优先使用pathname，如果没有则使用api_path
+    api_path = api_info.get('pathname') or api_info.get('api_path')
+    if api_path:
+        # 确保pathname以/开头
+        if not api_path.startswith('/'):
+            api_path = '/' + api_path
+        api_filter = {
+            'key': build_field_spec('request.pathname', 'logs'),
+            'value': [api_path],
+            'op': 'in'
+        }
+        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(api_filter)
+    
     return query
 
 
@@ -375,9 +463,14 @@ def build_service_logs_query(
     
     # 添加接口信息过滤（如果有）
     # 注意：实际字段名是request.pathname，不是api_path
+    # pathname应该是去掉baseurl的路径部分
     api_info = ticket_info.get('api_info', {})
-    api_path = api_info.get('api_path')
+    # 优先使用pathname，如果没有则使用api_path
+    api_path = api_info.get('pathname') or api_info.get('api_path')
     if api_path:
+        # 确保pathname以/开头
+        if not api_path.startswith('/'):
+            api_path = '/' + api_path
         api_filter = {
             'key': build_field_spec('request.pathname', 'logs'),
             'value': [api_path],
