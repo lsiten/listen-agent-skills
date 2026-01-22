@@ -18,6 +18,10 @@ from utils import (
     format_datetime
 )
 from experience_manager import search_history_experience, save_experience
+from prevalence_analyzer import (
+    analyze_prevalence,
+    load_and_analyze_prevalence_results
+)
 
 
 def process_log_data(mcp_results: Dict[str, Any]) -> Dict[str, Any]:
@@ -436,7 +440,8 @@ def generate_solution(
     log_analysis: Dict[str, Any],
     code_analysis: Dict[str, Any],
     ticket_info: Dict[str, Any],
-    history_experiences: list
+    history_experiences: list,
+    prevalence_analysis: Optional[Dict[str, Any]] = None
 ) -> str:
     """
     生成综合解决方案
@@ -590,9 +595,48 @@ def init_phase_2(
     history_experiences = search_history_experience(project_path, problem_description)
     print(f"  ✅ 检索到 {len(history_experiences)} 条相似经验")
     
+    # 分析普遍性问题
+    print("\n🔍 分析普遍性问题...")
+    prevalence_result = analyze_prevalence(
+        ticket_info,
+        log_analysis,
+        ticket_context,
+        project_path,
+        ticket_id
+    )
+    
+    # 如果普遍性查询指令已生成，尝试加载结果
+    prevalence_analysis = None
+    if prevalence_result.get('status') == 'pending_ai_execution':
+        # 检查是否有查询结果
+        from pathlib import Path
+        ticket_dir = get_ticket_dir(project_path, ticket_id)
+        prevalence_results_file = ticket_dir / 'prevalence_results.json'
+        if prevalence_results_file.exists():
+            print("  📊 发现普遍性查询结果，进行分析...")
+            prevalence_analysis = load_and_analyze_prevalence_results(
+                project_path,
+                ticket_id,
+                ticket_info,
+                prevalence_result.get('features', {})
+            )
+            if prevalence_analysis.get('is_prevalent'):
+                print(f"  ⚠️  检测到普遍性问题！级别: {prevalence_analysis.get('prevalence_level', 'unknown')}")
+                print(f"     影响: {prevalence_analysis.get('affected_count', 0)} 个错误, {len(prevalence_analysis.get('affected_users', []))} 个用户")
+            else:
+                print("  ✅ 未检测到普遍性问题，似乎是孤立事件")
+        else:
+            print("  ⏳ 等待AI执行普遍性查询（prevalence_instructions.json）")
+    
     # 生成综合解决方案
     print("\n💡 生成综合解决方案...")
-    solution = generate_solution(log_analysis, code_analysis, ticket_info, history_experiences)
+    solution = generate_solution(
+        log_analysis,
+        code_analysis,
+        ticket_info,
+        history_experiences,
+        prevalence_analysis
+    )
     
     # 生成解决方案文档
     print("\n📝 生成解决方案文档...")

@@ -21,6 +21,93 @@ from signoz_schema import (
 )
 
 
+def build_filter_expression(filters: List[Dict[str, Any]]) -> str:
+    """
+    构建SigNoz Query Builder v5的filter expression字符串
+    
+    ⚠️ 重要：SigNoz Query Builder v5使用filter（单数）和expression（SQL-like字符串），
+    而不是filters（复数）和items数组格式
+    
+    Args:
+        filters: 过滤条件列表，每个条件包含key, value, op
+    
+    Returns:
+        SQL-like表达式字符串
+    """
+    if not filters:
+        return ""
+    
+    expressions = []
+    for filter_item in filters:
+        key_spec = filter_item.get('key', {})
+        field_name = key_spec.get('name', '')
+        values = filter_item.get('value', [])
+        op = filter_item.get('op', 'in')
+        
+        if not field_name or not values:
+            continue
+        
+        # 根据操作符构建表达式
+        if op == 'in':
+            # 处理值列表，确保字符串值用引号包裹
+            formatted_values = []
+            for val in values:
+                if isinstance(val, str):
+                    # 转义单引号
+                    escaped_val = val.replace("'", "''")
+                    formatted_values.append(f"'{escaped_val}'")
+                else:
+                    formatted_values.append(str(val))
+            
+            # 对于IN操作符，即使只有一个值也使用IN格式（更符合SigNoz的格式）
+            values_str = ', '.join(formatted_values)
+            expressions.append(f"{field_name} IN ({values_str})")
+        
+        elif op == '=':
+            val = values[0] if values else None
+            if val is not None:
+                if isinstance(val, str):
+                    escaped_val = str(val).replace("'", "''")
+                    expressions.append(f"{field_name} = '{escaped_val}'")
+                else:
+                    expressions.append(f"{field_name} = {val}")
+        
+        elif op == '>=':
+            val = values[0] if values else None
+            if val is not None:
+                expressions.append(f"{field_name} >= {val}")
+        
+        elif op == '<=':
+            val = values[0] if values else None
+            if val is not None:
+                expressions.append(f"{field_name} <= {val}")
+        
+        elif op == '>':
+            val = values[0] if values else None
+            if val is not None:
+                expressions.append(f"{field_name} > {val}")
+        
+        elif op == '<':
+            val = values[0] if values else None
+            if val is not None:
+                expressions.append(f"{field_name} < {val}")
+        
+        elif op == 'contains' or op == 'CONTAINS':
+            val = values[0] if values else None
+            if val is not None:
+                escaped_val = str(val).replace("'", "''")
+                expressions.append(f"{field_name} CONTAINS '{escaped_val}'")
+        
+        elif op == 'like' or op == 'LIKE':
+            val = values[0] if values else None
+            if val is not None:
+                escaped_val = str(val).replace("'", "''")
+                expressions.append(f"{field_name} LIKE '{escaped_val}'")
+    
+    # 使用AND连接所有表达式
+    return " AND ".join(expressions) if expressions else ""
+
+
 def extract_features_from_results(mcp_results: Dict[str, Any]) -> Dict[str, Any]:
     """
     从MCP查询结果中提取特征信息
@@ -305,10 +392,45 @@ def generate_mcp_instructions(
     ticket_dir = get_ticket_dir(project_path, ticket_id)
     instructions_file = ticket_dir / 'mcp_instructions.json'
     
-    # 验证时间范围
+    # 验证和调整时间范围
     if not time_range.get('start') or not time_range.get('end'):
         print("⚠️  时间范围不完整，无法生成查询指令", file=sys.stderr)
         return None
+    
+    # ⚠️ 重要：自动调整时间范围
+    from datetime import datetime, timedelta
+    start_ms = time_range.get('start')
+    end_ms = time_range.get('end')
+    now_ms = int(datetime.now().timestamp() * 1000)
+    
+    # 1. 如果结束时间在未来，自动调整为最近24小时
+    if end_ms > now_ms:
+        print(f"⚠️  查询结束时间在未来，自动调整为最近24小时", file=sys.stderr)
+        end_ms = now_ms
+        start_ms = now_ms - (24 * 60 * 60 * 1000)  # 24小时前
+        time_range['start'] = start_ms
+        time_range['end'] = end_ms
+        time_range['start_display'] = datetime.fromtimestamp(start_ms / 1000).strftime('%Y-%m-%d %H:%M:%S')
+        time_range['end_display'] = datetime.fromtimestamp(end_ms / 1000).strftime('%Y-%m-%d %H:%M:%S')
+        time_range['source'] = time_range.get('source', '') + '（已调整为最近24小时）'
+    
+    # 2. 如果时间范围太窄（小于2小时），扩展为+/- 2小时
+    duration_ms = end_ms - start_ms
+    duration_hours = duration_ms / (60 * 60 * 1000)
+    if duration_hours < 2:
+        print(f"⚠️  时间范围太窄（{duration_hours:.1f}小时），扩展为+/- 2小时", file=sys.stderr)
+        center_ms = (start_ms + end_ms) // 2
+        start_ms = center_ms - (2 * 60 * 60 * 1000)  # 2小时前
+        end_ms = center_ms + (2 * 60 * 60 * 1000)  # 2小时后
+        # 确保不超出当前时间
+        if end_ms > now_ms:
+            end_ms = now_ms
+            start_ms = end_ms - (4 * 60 * 60 * 1000)  # 确保至少4小时范围
+        time_range['start'] = start_ms
+        time_range['end'] = end_ms
+        time_range['start_display'] = datetime.fromtimestamp(start_ms / 1000).strftime('%Y-%m-%d %H:%M:%S')
+        time_range['end_display'] = datetime.fromtimestamp(end_ms / 1000).strftime('%Y-%m-%d %H:%M:%S')
+        time_range['source'] = time_range.get('source', '') + '（已扩展为+/- 2小时）'
     
     # 构建MCP指令
     instructions = {
@@ -357,7 +479,7 @@ def generate_mcp_instructions(
             if query_builder:
                 queries.append({
                     'priority': 2,
-                    'tool': 'execute_builder_query',
+                    'tool': 'signoz_execute_builder_query',
                     'params': {
                         'query': query_builder
                     },
@@ -386,7 +508,7 @@ def generate_mcp_instructions(
             if query_builder:
                 queries.append({
                     'priority': 3,
-                    'tool': 'execute_builder_query',
+                    'tool': 'signoz_execute_builder_query',
                     'params': {
                         'query': query_builder
                     },
@@ -398,8 +520,8 @@ def generate_mcp_instructions(
     # 添加说明
     instructions['notes'] = """请按照优先级顺序执行查询：
 1. 必须首先执行 list_services 获取服务列表，确认服务名称
-2. 根据服务名称和查询条件，使用 execute_builder_query 执行具体查询
-3. 在Query Builder中添加 service.name 过滤条件，提高查询成功率
+2. 根据服务名称和查询条件，使用 signoz_execute_builder_query 执行具体查询
+3. ⚠️ 重要：SigNoz Query Builder v5使用filter（单数）和expression（SQL-like字符串），而不是filters（复数）和items数组格式
 4. ⚠️ 重要：查询时不要添加fieldContext字段，SigNoz会自动识别字段上下文
 5. ⚠️ 重要：确保formatTableResultForUI设置为true，以便正确显示结果
 6. ⚠️ 重要：如果查询结果为空，尝试：
@@ -407,6 +529,7 @@ def generate_mcp_instructions(
    - 检查服务名称是否准确（使用list_services获取的实际服务名）
    - 检查字段名称是否正确（如user.id是int64类型，确保值类型匹配）
    - 尝试简化查询条件，逐步添加过滤条件
+   - 检查filter expression格式是否正确（应该是SQL-like字符串，如 "severity_text IN ('ERROR', 'FATAL') AND service.name in ['service-name']"）
 7. ⚠️ 迭代查询：如果查询结果不为空，可以从结果中提取特征信息（设备ID、用户ID、IP、地理位置、浏览器版本、应用版本等），然后基于这些特征信息进行更精确的查询
 8. ⚠️ 如果没有用户ID，可以根据工单中的特征信息（如设备ID）查询到的数据更新设备ID信息
 9. 查询结果保存到 mcp_results.json 文件中
@@ -453,12 +576,106 @@ def build_error_logs_query(
     time_range: Dict[str, Any],
     signoz_config: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
-    """构建错误日志查询（Query Builder v5格式）"""
+    """
+    构建错误日志查询（Query Builder v5格式）
+    
+    ⚠️ 重要：SigNoz Query Builder v5使用filter（单数）和expression（SQL-like字符串），
+    而不是filters（复数）和items数组格式
+    """
     start_ms = time_range.get('start')
     end_ms = time_range.get('end')
     
     if not start_ms or not end_ms:
         return None
+    
+    # 构建过滤条件列表（用于后续转换为expression）
+    filter_items = []
+    
+    # 基础过滤：错误日志
+    filter_items.append({
+        'key': {'name': 'severity_text'},
+        'value': SEVERITY_ERROR_VALUES,
+        'op': 'in'
+    })
+    
+    # 添加服务过滤（如果有）
+    services = ticket_info.get('services', [])
+    if services:
+        service_values = services if isinstance(services, list) else [services]
+        filter_items.append({
+            'key': {'name': 'service.name'},
+            'value': service_values,
+            'op': 'in'
+        })
+    
+    # 添加用户信息过滤（如果有）
+    user_info = ticket_info.get('user_info', {})
+    user_id = user_info.get('user.id') or user_info.get('user_id')
+    if user_id:
+        try:
+            user_id_value = int(user_id) if isinstance(user_id, str) else user_id
+        except (ValueError, TypeError):
+            user_id_value = user_id
+        
+        filter_items.append({
+            'key': {'name': 'user.id'},
+            'value': [user_id_value],
+            'op': 'in'
+        })
+    
+    # ⚠️ 重要：如果没有用户ID，可以根据设备ID进行查询
+    device_info = ticket_info.get('device_info', {})
+    client_id = device_info.get('user.client_id') or device_info.get('client_id') or device_info.get('device_id')
+    if client_id:
+        filter_items.append({
+            'key': {'name': 'user.client_id'},
+            'value': [str(client_id)],
+            'op': 'in'
+        })
+    
+    # 添加接口信息过滤（如果有）
+    api_info = ticket_info.get('api_info', {})
+    api_path = api_info.get('pathname') or api_info.get('api_path')
+    if api_path:
+        if not api_path.startswith('/'):
+            api_path = '/' + api_path
+        
+        if not api_info.get('pathname') and api_info.get('api_path'):
+            base_url = signoz_config.get('base_url')
+            if base_url:
+                from urllib.parse import urlparse
+                try:
+                    parsed = urlparse(base_url)
+                    base_path = parsed.path
+                    if base_path and base_path != '/':
+                        api_path = base_path.rstrip('/') + api_path
+                except Exception:
+                    pass
+        
+        filter_items.append({
+            'key': {'name': 'request.pathname'},
+            'value': [api_path],
+            'op': 'in'
+        })
+    
+    # 添加地区信息过滤（如果有）
+    region_info = ticket_info.get('region_info', {})
+    if region_info.get('city'):
+        filter_items.append({
+            'key': {'name': 'geo.city_name'},
+            'value': [region_info['city']],
+            'op': 'in'
+        })
+    
+    if region_info.get('country'):
+        filter_items.append({
+            'key': {'name': 'geo.country_name'},
+            'value': [region_info['country']],
+            'op': 'in'
+        })
+    
+    # 将过滤条件转换为SQL-like表达式
+    filter_expression = build_filter_expression(filter_items)
     
     # 构建查询
     query = {
@@ -479,161 +696,46 @@ def build_error_logs_query(
                         'order': [
                             {
                                 'key': {
-                                    'name': 'timestamp',
-                                    'fieldDataType': 'int64',
-                                    'signal': 'logs'
+                                    'name': 'timestamp'
                                 },
                                 'direction': 'desc'
                             }
                         ],
                         'selectFields': [
                             build_field_spec('service.name', 'logs'),
-                            build_field_spec('body', 'logs'),  # 添加body字段，这是最常用的日志内容字段
+                            build_field_spec('body', 'logs'),
                             build_field_spec('pathname', 'logs'),
-                            build_field_spec('request.pathname', 'logs'),  # 添加request.pathname，用于API路径查询
+                            build_field_spec('request.pathname', 'logs'),
                             build_field_spec('message', 'logs'),
                             build_field_spec('stack', 'logs'),
                             build_field_spec('severity_text', 'logs'),
                             build_field_spec('severity_number', 'logs'),
                             build_field_spec('timestamp', 'logs'),
                             build_field_spec('user.id', 'logs'),
-                            build_field_spec('user.client_id', 'logs'),  # 添加设备ID字段
-                            build_field_spec('source.address', 'logs'),  # 添加IP地址字段
-                            build_field_spec('geo.city_name', 'logs'),  # 添加地理位置字段
-                            build_field_spec('browser.name', 'logs'),  # 添加浏览器名称字段
-                            build_field_spec('browser.version', 'logs'),  # 添加浏览器版本字段
-                            build_field_spec('service.version', 'logs'),  # 添加应用版本字段
+                            build_field_spec('user.client_id', 'logs'),
+                            build_field_spec('source.address', 'logs'),
+                            build_field_spec('geo.city_name', 'logs'),
+                            build_field_spec('browser.name', 'logs'),
+                            build_field_spec('browser.version', 'logs'),
+                            build_field_spec('service.version', 'logs'),
                             build_field_spec('trace_id', 'logs')
                         ],
-                        'filters': {
-                            'items': [
-                                {
-                                    'key': build_field_spec('severity_text', 'logs'),
-                                    'value': SEVERITY_ERROR_VALUES,
-                                    'op': 'in'
-                                }
-                            ],
-                            'op': 'and'
-                        },
-                        # 注意：平台查询支持NOT_CONTAINS和NOT_IN操作符
-                        # 如果需要排除某些内容，可以添加类似以下的条件：
-                        # {
-                        #     'key': build_field_spec('stack', 'logs'),
-                        #     'value': ['AxiosError'],
-                        #     'op': 'not_contains'  # 如果Query Builder支持
-                        # }
+                        'filter': {
+                            'expression': filter_expression
+                        } if filter_expression else None,
+                        'having': {
+                            'expression': ''
+                        }
                     }
                 }
             ]
         },
         'formatOptions': {
-            'formatTableResultForUI': True,  # 设置为true以便平台正确显示结果
+            'formatTableResultForUI': True,
             'fillGaps': False
         },
         'variables': {}
     }
-    
-    # 添加服务过滤（如果有）
-    # ⚠️ 注意：平台支持前缀匹配（如 service.name IN cs....），但Query Builder需要精确匹配
-    # 如果有多个服务或需要前缀匹配，可以添加多个条件
-    # ⚠️ 重要：如果list_services返回空，可能是时间范围问题，尝试扩大时间范围或使用最近24小时
-    services = ticket_info.get('services', [])
-    if services:
-        # 如果服务名看起来像前缀（以点结尾），需要特殊处理
-        # 但Query Builder不支持前缀匹配，所以只使用精确匹配
-        # 确保服务名是列表格式
-        service_values = services if isinstance(services, list) else [services]
-        service_filter = {
-            'key': build_field_spec('service.name', 'logs'),
-            'value': service_values,
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(service_filter)
-    
-    # 添加用户信息过滤（如果有）
-    # ⚠️ 注意：user.id字段类型是int64，但值可能是字符串或数字
-    # 需要确保类型匹配，如果user_id是字符串形式的数字，需要转换为int
-    user_info = ticket_info.get('user_info', {})
-    user_id = user_info.get('user.id') or user_info.get('user_id')
-    if user_id:
-        # 尝试转换为int（因为user.id字段类型是int64）
-        try:
-            user_id_value = int(user_id) if isinstance(user_id, str) else user_id
-        except (ValueError, TypeError):
-            # 如果转换失败，使用原始值
-            user_id_value = user_id
-        
-        user_filter = {
-            'key': build_field_spec('user.id', 'logs'),
-            'value': [user_id_value],  # 使用转换后的值
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(user_filter)
-    
-    # ⚠️ 重要：如果没有用户ID，可以根据设备ID进行查询
-    # 添加设备信息过滤（如果有）
-    # 注意：实际字段名是user.client_id，不是client_id或device_id
-    device_info = ticket_info.get('device_info', {})
-    client_id = device_info.get('user.client_id') or device_info.get('client_id') or device_info.get('device_id')
-    if client_id:
-        device_filter = {
-            'key': build_field_spec('user.client_id', 'logs'),
-            'value': [str(client_id)],
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(device_filter)
-    
-    # 添加接口信息过滤（如果有）
-    # ⚠️ 重要：pathname应该包含baseurl的路径部分
-    # 例如：如果baseurl是 https://cs8.intsig.net/sync，api_path是 /revert_dir_list
-    # 那么pathname应该是 /sync/revert_dir_list（包含baseurl的路径部分/sync）
-    api_info = ticket_info.get('api_info', {})
-    # 优先使用pathname（应该已经包含baseurl的路径部分），如果没有则使用api_path
-    api_path = api_info.get('pathname') or api_info.get('api_path')
-    if api_path:
-        # 确保pathname以/开头
-        if not api_path.startswith('/'):
-            api_path = '/' + api_path
-        
-        # 如果pathname还没有包含baseurl路径，尝试从signoz_config中获取并组合
-        if not api_info.get('pathname') and api_info.get('api_path'):
-            # 如果只有api_path，尝试从signoz_config中获取base_url并组合
-            base_url = signoz_config.get('base_url')
-            if base_url:
-                from urllib.parse import urlparse
-                try:
-                    parsed = urlparse(base_url)
-                    base_path = parsed.path
-                    if base_path and base_path != '/':
-                        api_path = base_path.rstrip('/') + api_path
-                except Exception:
-                    pass
-        
-        api_filter = {
-            'key': build_field_spec('request.pathname', 'logs'),
-            'value': [api_path],
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(api_filter)
-    
-    # 添加地区信息过滤（如果有）
-    # 注意：实际字段名是geo.city_name和geo.country_name，不是city和country
-    region_info = ticket_info.get('region_info', {})
-    if region_info.get('city'):
-        city_filter = {
-            'key': build_field_spec('geo.city_name', 'logs'),
-            'value': [region_info['city']],
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(city_filter)
-    
-    if region_info.get('country'):
-        country_filter = {
-            'key': build_field_spec('geo.country_name', 'logs'),
-            'value': [region_info['country']],
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(country_filter)
     
     return query
 
@@ -644,7 +746,12 @@ def build_service_logs_query(
     time_range: Dict[str, Any],
     signoz_config: Dict[str, Any]
 ) -> Optional[Dict[str, Any]]:
-    """构建服务日志查询（Query Builder v5格式）"""
+    """
+    构建服务日志查询（Query Builder v5格式）
+    
+    ⚠️ 重要：SigNoz Query Builder v5使用filter（单数）和expression（SQL-like字符串），
+    而不是filters（复数）和items数组格式
+    """
     start_ms = time_range.get('start')
     end_ms = time_range.get('end')
     
@@ -655,22 +762,21 @@ def build_service_logs_query(
     common_fields = signoz_config.get('common_query_fields', DEFAULT_QUERY_FIELDS)
     
     # 构建selectFields（使用signoz_schema模块）
-    # 优先包含平台查询结果中常用的字段
     priority_fields = [
         'service.name',
-        'body',  # 添加body字段，这是最常用的日志内容字段
+        'body',
         'pathname',
-        'request.pathname',  # 添加request.pathname，用于API路径查询
+        'request.pathname',
         'message',
         'stack',
         'severity_text',
         'user.id',
-        'user.client_id',  # 添加设备ID字段
-        'source.address',  # 添加IP地址字段
-        'geo.city_name',  # 添加地理位置字段
-        'browser.name',  # 添加浏览器名称字段
-        'browser.version',  # 添加浏览器版本字段
-        'service.version'  # 添加应用版本字段
+        'user.client_id',
+        'source.address',
+        'geo.city_name',
+        'browser.name',
+        'browser.version',
+        'service.version'
     ]
     
     select_fields = []
@@ -685,10 +791,77 @@ def build_service_logs_query(
     
     # 再添加其他公共字段
     for field in common_fields:
-        if field not in added_fields and len(select_fields) < 20:  # 增加字段数量限制
+        if field not in added_fields and len(select_fields) < 20:
             field_spec = build_field_spec(field, 'logs')
             select_fields.append(field_spec)
             added_fields.add(field)
+    
+    # 构建过滤条件列表（用于后续转换为expression）
+    filter_items = []
+    
+    # 基础过滤：服务名称
+    filter_items.append({
+        'key': {'name': 'service.name'},
+        'value': [service] if isinstance(service, str) else service,
+        'op': 'in'
+    })
+    
+    # 添加用户信息过滤（如果有）
+    user_info = ticket_info.get('user_info', {})
+    user_id = user_info.get('user.id') or user_info.get('user_id')
+    if user_id:
+        try:
+            user_id_value = int(user_id) if isinstance(user_id, str) else user_id
+        except (ValueError, TypeError):
+            user_id_value = user_id
+        
+        filter_items.append({
+            'key': {'name': 'user.id'},
+            'value': [user_id_value],
+            'op': 'in'
+        })
+    
+    # ⚠️ 重要：如果没有用户ID，可以根据设备ID进行查询
+    device_info = ticket_info.get('device_info', {})
+    client_id = device_info.get('user.client_id') or device_info.get('client_id') or device_info.get('device_id')
+    if client_id:
+        filter_items.append({
+            'key': {'name': 'user.client_id'},
+            'value': [str(client_id)],
+            'op': 'in'
+        })
+    
+    # 添加接口信息过滤（如果有）
+    api_info = ticket_info.get('api_info', {})
+    api_path = api_info.get('pathname') or api_info.get('api_path')
+    if api_path:
+        if not api_path.startswith('/'):
+            api_path = '/' + api_path
+        
+        filter_items.append({
+            'key': {'name': 'request.pathname'},
+            'value': [api_path],
+            'op': 'in'
+        })
+    
+    # 添加地区信息过滤（如果有）
+    region_info = ticket_info.get('region_info', {})
+    if region_info.get('city'):
+        filter_items.append({
+            'key': {'name': 'geo.city_name'},
+            'value': [region_info['city']],
+            'op': 'in'
+        })
+    
+    if region_info.get('country'):
+        filter_items.append({
+            'key': {'name': 'geo.country_name'},
+            'value': [region_info['country']],
+            'op': 'in'
+        })
+    
+    # 将过滤条件转换为SQL-like表达式
+    filter_expression = build_filter_expression(filter_items)
     
     # 构建查询
     query = {
@@ -709,101 +882,28 @@ def build_service_logs_query(
                         'order': [
                             {
                                 'key': {
-                                    'name': 'timestamp',
-                                    'fieldDataType': 'int64',
-                                    'signal': 'logs'
+                                    'name': 'timestamp'
                                 },
                                 'direction': 'desc'
                             }
                         ],
                         'selectFields': select_fields,
-                        # 确保包含常用字段（如果不在common_fields中）
-                        # 这些字段在平台查询结果中经常显示
-                        'filters': {
-                            'items': [
-                                {
-                                    'key': build_field_spec('service.name', 'logs'),
-                                    'value': [service] if isinstance(service, str) else service,
-                                    'op': 'in'
-                                }
-                            ],
-                            'op': 'and'
+                        'filter': {
+                            'expression': filter_expression
+                        } if filter_expression else None,
+                        'having': {
+                            'expression': ''
                         }
                     }
                 }
             ]
         },
         'formatOptions': {
-            'formatTableResultForUI': True,  # 设置为true以便平台正确显示结果
+            'formatTableResultForUI': True,
             'fillGaps': False
         },
         'variables': {}
     }
-    
-    # 添加用户信息过滤（如果有）
-    # ⚠️ 注意：user.id字段类型是int64，但值可能是字符串或数字
-    # 需要确保类型匹配，如果user_id是字符串形式的数字，需要转换为int
-    user_info = ticket_info.get('user_info', {})
-    user_id = user_info.get('user.id') or user_info.get('user_id')
-    if user_id:
-        # 尝试转换为int（因为user.id字段类型是int64）
-        try:
-            user_id_value = int(user_id) if isinstance(user_id, str) else user_id
-        except (ValueError, TypeError):
-            # 如果转换失败，使用原始值
-            user_id_value = user_id
-        
-        user_filter = {
-            'key': build_field_spec('user.id', 'logs'),
-            'value': [user_id_value],  # 使用转换后的值
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(user_filter)
-    
-    # ⚠️ 重要：如果没有用户ID，可以根据设备ID进行查询
-    # 添加设备信息过滤（如果有）
-    # 注意：实际字段名是user.client_id，不是client_id或device_id
-    device_info = ticket_info.get('device_info', {})
-    client_id = device_info.get('user.client_id') or device_info.get('client_id') or device_info.get('device_id')
-    if client_id:
-        device_filter = {
-            'key': build_field_spec('user.client_id', 'logs'),
-            'value': [str(client_id)],
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(device_filter)
-    
-    # 添加接口信息过滤（如果有）
-    api_info = ticket_info.get('api_info', {})
-    api_path = api_info.get('pathname') or api_info.get('api_path')
-    if api_path:
-        if not api_path.startswith('/'):
-            api_path = '/' + api_path
-        
-        api_filter = {
-            'key': build_field_spec('request.pathname', 'logs'),
-            'value': [api_path],
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(api_filter)
-    
-    # 添加地区信息过滤（如果有）
-    region_info = ticket_info.get('region_info', {})
-    if region_info.get('city'):
-        city_filter = {
-            'key': build_field_spec('geo.city_name', 'logs'),
-            'value': [region_info['city']],
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(city_filter)
-    
-    if region_info.get('country'):
-        country_filter = {
-            'key': build_field_spec('geo.country_name', 'logs'),
-            'value': [region_info['country']],
-            'op': 'in'
-        }
-        query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(country_filter)
     
     return query
 

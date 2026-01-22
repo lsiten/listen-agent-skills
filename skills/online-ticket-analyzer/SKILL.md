@@ -251,11 +251,12 @@ python scripts/analyze_ticket.py \
 
 **推荐优先级（从高到低）：**
 
-1. **execute_builder_query（Query Builder v5）** - **强烈推荐**
+1. **signoz_execute_builder_query（Query Builder v5）** - **强烈推荐**
    - ✅ 优点：更灵活，不需要指定服务名，支持复杂过滤条件
    - ✅ 优点：字段路径更直观，不需要 attributes. 前缀
    - ✅ 优点：支持多条件组合查询
    - ⚠️ 注意：需要构建完整的 Query Builder v5 JSON 结构
+   - ⚠️ **关键**：使用filter（单数）和expression（SQL-like字符串），而不是filters（复数）和items数组格式
    - ⚠️ 重要：查询时不要添加fieldContext字段，SigNoz会自动识别字段上下文
    - ⚠️ 重要：确保formatTableResultForUI设置为true，以便正确显示结果
    - ⚠️ 重要：确保字段类型匹配（如user.id是int64类型，值也应该是数字）
@@ -339,7 +340,7 @@ python scripts/analyze_ticket.py \
     },
     {
       "priority": 2,
-      "tool": "execute_builder_query",
+      "tool": "signoz_execute_builder_query",
       "params": {
         "query": {
           "schemaVersion": "v1",
@@ -376,24 +377,21 @@ python scripts/analyze_ticket.py \
                       "signal": "logs"
                     }
                   ],
-                  "filters": {
-                    "items": [
-                      {
-                        "key": {
-                          "name": "service.name",
-                          "fieldDataType": "string",
-                          "signal": "logs"
-                        },
-                        "value": ["user-service"],
-                        "op": "in"
-                      }
-                    ],
-                    "op": "and"
+                  "filter": {
+                    "expression": "service.name in ['user-service']"
+                  },
+                  "having": {
+                    "expression": ""
                   }
                 }
               }
             ]
-          }
+          },
+          "formatOptions": {
+            "formatTableResultForUI": true,
+            "fillGaps": false
+          },
+          "variables": {}
         }
       },
       "description": "查询user-service的日志"
@@ -435,10 +433,11 @@ SigNoz使用OpenTelemetry标准，将字段分为不同的上下文级别：
 {
   "name": "service.name",
   "fieldDataType": "string",
-  "signal": "logs",
-  "fieldContext": "resource"
+  "signal": "logs"
 }
 ```
+
+**注意**：查询时不要添加`fieldContext`字段，SigNoz会自动识别字段上下文。
 
 #### 基础属性（Attributes - Web/小程序通用）
 
@@ -663,28 +662,15 @@ MCP查询返回的结果通常具有以下结构：
 
 #### 示例1：查询特定服务的错误日志
 
+⚠️ **重要**：SigNoz Query Builder v5使用filter（单数）和expression（SQL-like字符串），而不是filters（复数）和items数组格式
+
 ```json
 {
-  "filters": {
-    "items": [
-      {
-        "key": {
-          "name": "service.name",
-          "fieldContext": "resource"
-        },
-        "value": ["事业部.小组.项目名"],
-        "op": "in"
-      },
-      {
-        "key": {
-          "name": "severity_text",
-          "fieldContext": "attributes"
-        },
-        "value": ["error", "Error", "ERROR"],
-        "op": "in"
-      }
-    ],
-    "op": "and"
+  "filter": {
+    "expression": "service.name in ['事业部.小组.项目名'] AND severity_text IN ('error', 'Error', 'ERROR')"
+  },
+  "having": {
+    "expression": ""
   }
 }
 ```
@@ -693,40 +679,28 @@ MCP查询返回的结果通常具有以下结构：
 
 ```json
 {
-  "filters": {
-    "items": [
-      {
-        "key": {
-          "name": "user.id",
-          "fieldContext": "attributes"
-        },
-        "value": ["4472431079"],
-        "op": "in"
-      }
-    ],
-    "op": "and"
+  "filter": {
+    "expression": "user.id = 4472431079"
+  },
+  "having": {
+    "expression": ""
   }
 }
 ```
 
-**注意**：字段名是 `user.id`（点分隔），不是 `user_id`。
+**注意**：
+- 字段名是 `user.id`（点分隔），不是 `user_id`
+- user.id字段类型是int64，值应该是数字，不需要引号
 
 #### 示例3：查询特定设备的日志
 
 ```json
 {
-  "filters": {
-    "items": [
-      {
-        "key": {
-          "name": "user.client_id",
-          "fieldContext": "attributes"
-        },
-        "value": ["B4SMfdd5F0FW83e1a18rfA5J"],
-        "op": "in"
-      }
-    ],
-    "op": "and"
+  "filter": {
+    "expression": "user.client_id = 'B4SMfdd5F0FW83e1a18rfA5J'"
+  },
+  "having": {
+    "expression": ""
   }
 }
 ```
@@ -737,26 +711,11 @@ MCP查询返回的结果通常具有以下结构：
 
 ```json
 {
-  "filters": {
-    "items": [
-      {
-        "key": {
-          "name": "request.pathname",
-          "fieldContext": "attributes"
-        },
-        "value": ["/api/login"],
-        "op": "in"
-      },
-      {
-        "key": {
-          "name": "response.status",
-          "fieldContext": "attributes"
-        },
-        "value": [500, 502, 503],
-        "op": "in"
-      }
-    ],
-    "op": "and"
+  "filter": {
+    "expression": "request.pathname = '/api/login' AND response.status IN (500, 502, 503)"
+  },
+  "having": {
+    "expression": ""
   }
 }
 ```
@@ -765,18 +724,11 @@ MCP查询返回的结果通常具有以下结构：
 
 ```json
 {
-  "filters": {
-    "items": [
-      {
-        "key": {
-          "name": "response.errno",
-          "fieldContext": "attributes"
-        },
-        "value": ["E001", "E002"],
-        "op": "in"
-      }
-    ],
-    "op": "and"
+  "filter": {
+    "expression": "response.errno IN ('E001', 'E002')"
+  },
+  "having": {
+    "expression": ""
   }
 }
 ```
@@ -785,18 +737,11 @@ MCP查询返回的结果通常具有以下结构：
 
 ```json
 {
-  "filters": {
-    "items": [
-      {
-        "key": {
-          "name": "geo.city_name",
-          "fieldContext": "attributes"
-        },
-        "value": ["Shanghai"],
-        "op": "in"
-      }
-    ],
-    "op": "and"
+  "filter": {
+    "expression": "geo.city_name = 'Shanghai'"
+  },
+  "having": {
+    "expression": ""
   }
 }
 ```
@@ -805,18 +750,11 @@ MCP查询返回的结果通常具有以下结构：
 
 ```json
 {
-  "filters": {
-    "items": [
-      {
-        "key": {
-          "name": "response.time",
-          "fieldContext": "attributes"
-        },
-        "value": [3000],
-        "op": ">="
-      }
-    ],
-    "op": "and"
+  "filter": {
+    "expression": "response.time >= 3000"
+  },
+  "having": {
+    "expression": ""
   }
 }
 ```
@@ -829,44 +767,44 @@ MCP查询返回的结果通常具有以下结构：
     {
       "name": "lcp",
       "fieldDataType": "int64",
-      "signal": "logs",
-      "fieldContext": "attributes"
+      "signal": "logs"
     },
     {
       "name": "fcp",
       "fieldDataType": "int64",
-      "signal": "logs",
-      "fieldContext": "attributes"
+      "signal": "logs"
     },
     {
       "name": "cls",
       "fieldDataType": "float",
-      "signal": "logs",
-      "fieldContext": "attributes"
+      "signal": "logs"
     }
-  ]
+  ],
+  "filter": {
+    "expression": ""
+  },
+  "having": {
+    "expression": ""
+  }
 }
 ```
+
+**注意**：查询时不要添加`fieldContext`字段，SigNoz会自动识别字段上下文。
 
 #### 示例9：查询小程序启动性能
 
 ```json
 {
-  "filters": {
-    "items": [
-      {
-        "key": {
-          "name": "duration",
-          "fieldContext": "attributes"
-        },
-        "value": [3000],
-        "op": ">="
-      }
-    ],
-    "op": "and"
+  "filter": {
+    "expression": "duration >= 3000"
+  },
+  "having": {
+    "expression": ""
   }
 }
 ```
+
+**注意**：使用`filter.expression`（SQL-like字符串）格式，而不是`filters.items`数组格式。
 
 ### 实际数据结构说明
 
@@ -1057,11 +995,13 @@ MCP查询返回的结果通常具有以下结构：
 
 ### 注意事项
 
-1. **字段上下文必须正确**：resource级别的字段必须使用`fieldContext: "resource"`，attributes级别的字段必须使用`fieldContext: "attributes"`
+1. **⚠️ 重要：不要添加fieldContext字段**：查询时不要添加`fieldContext`字段，SigNoz会自动识别字段上下文（resource、attributes等）
 
-2. **字段数据类型**：确保`fieldDataType`与实际数据类型匹配（string, int64等）
+2. **字段数据类型**：确保`fieldDataType`与实际数据类型匹配（string, int64等），例如`user.id`是`int64`类型，值也应该是数字
 
 3. **嵌套字段处理**：对于嵌套字段（如`service.name`），在Query Builder中使用`name: "service.name"`，在结果解析时会自动处理
+
+4. **filter格式**：必须使用`filter.expression`（SQL-like字符串）格式，而不是`filters.items`数组格式
 
 4. **自定义字段**：如果项目使用了自定义字段，需要在`signoz_config.json`中配置，系统会自动识别和使用
 
