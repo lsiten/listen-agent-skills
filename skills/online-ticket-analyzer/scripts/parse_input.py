@@ -428,24 +428,44 @@ def extract_api_info(text: str, project_path: Optional[str] = None) -> Dict[str,
     # 保存结果
     if api_path:
         api_info['api_path'] = api_path
-        api_info['pathname'] = api_path  # pathname就是去掉baseurl的路径
         
-        # 如果pathname已识别，但还没有完整路径，尝试从api_baseurls中查找
-        if not full_url and api_baseurls:
-            # 尝试匹配可能的baseUrl（需要AI通读代码确定，这里只做辅助）
-            # 优先使用base_url，如果没有则尝试从api_baseurls中查找
-            if base_url:
-                from urllib.parse import urlparse
-                try:
-                    parsed = urlparse(base_url)
-                    base_path = parsed.path
-                    if base_path and base_path != '/':
-                        full_path = base_path.rstrip('/') + api_path
-                    else:
-                        full_path = api_path
+        # ⚠️ 重要：pathname应该包含baseurl的路径部分
+        # 例如：如果baseurl是 https://cs8.intsig.net/sync，api_path是 /revert_dir_list
+        # 那么pathname应该是 /sync/revert_dir_list（包含baseurl的路径部分/sync）
+        pathname = api_path
+        
+        # 如果base_url存在，提取其路径部分并组合
+        if base_url:
+            from urllib.parse import urlparse
+            try:
+                parsed = urlparse(base_url)
+                base_path = parsed.path
+                if base_path and base_path != '/':
+                    # 组合baseurl的路径部分和api_path
+                    pathname = base_path.rstrip('/') + (api_path if api_path.startswith('/') else '/' + api_path)
+            except Exception:
+                pass
+        
+        # 如果api_baseurls存在，尝试从其中查找匹配的baseurl
+        # 这需要AI通读代码确定，这里只做辅助
+        if api_baseurls and not pathname.startswith('/'):
+            # 如果pathname还没有包含baseurl路径，尝试从api_baseurls中查找
+            # 注意：这里需要AI根据代码上下文确定使用哪个baseurl
+            pass
+        
+        api_info['pathname'] = pathname
+        
+        # 保存full_path（用于调试和显示）
+        if base_url:
+            from urllib.parse import urlparse
+            try:
+                parsed = urlparse(base_url)
+                base_path = parsed.path
+                if base_path and base_path != '/':
+                    full_path = base_path.rstrip('/') + (api_path if api_path.startswith('/') else '/' + api_path)
                     api_info['full_path'] = full_path
-                except Exception:
-                    pass
+            except Exception:
+                pass
     
     if full_url:
         api_info['full_url'] = full_url

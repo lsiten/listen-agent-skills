@@ -326,15 +326,31 @@ def build_error_logs_query(
         query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(user_filter)
     
     # 添加接口信息过滤（如果有）
-    # 注意：实际字段名是request.pathname，不是api_path
-    # pathname应该是去掉baseurl的路径部分
+    # ⚠️ 重要：pathname应该包含baseurl的路径部分
+    # 例如：如果baseurl是 https://cs8.intsig.net/sync，api_path是 /revert_dir_list
+    # 那么pathname应该是 /sync/revert_dir_list（包含baseurl的路径部分/sync）
     api_info = ticket_info.get('api_info', {})
-    # 优先使用pathname，如果没有则使用api_path
+    # 优先使用pathname（应该已经包含baseurl的路径部分），如果没有则使用api_path
     api_path = api_info.get('pathname') or api_info.get('api_path')
     if api_path:
         # 确保pathname以/开头
         if not api_path.startswith('/'):
             api_path = '/' + api_path
+        
+        # 如果pathname还没有包含baseurl路径，尝试从signoz_config中获取并组合
+        if not api_info.get('pathname') and api_info.get('api_path'):
+            # 如果只有api_path，尝试从signoz_config中获取base_url并组合
+            base_url = signoz_config.get('base_url')
+            if base_url:
+                from urllib.parse import urlparse
+                try:
+                    parsed = urlparse(base_url)
+                    base_path = parsed.path
+                    if base_path and base_path != '/':
+                        api_path = base_path.rstrip('/') + api_path
+                except Exception:
+                    pass
+        
         api_filter = {
             'key': build_field_spec('request.pathname', 'logs'),
             'value': [api_path],
@@ -462,15 +478,31 @@ def build_service_logs_query(
         query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(device_filter)
     
     # 添加接口信息过滤（如果有）
-    # 注意：实际字段名是request.pathname，不是api_path
-    # pathname应该是去掉baseurl的路径部分
+    # ⚠️ 重要：pathname应该包含baseurl的路径部分
+    # 例如：如果baseurl是 https://cs8.intsig.net/sync，api_path是 /revert_dir_list
+    # 那么pathname应该是 /sync/revert_dir_list（包含baseurl的路径部分/sync）
     api_info = ticket_info.get('api_info', {})
-    # 优先使用pathname，如果没有则使用api_path
+    # 优先使用pathname（应该已经包含baseurl的路径部分），如果没有则使用api_path
     api_path = api_info.get('pathname') or api_info.get('api_path')
     if api_path:
         # 确保pathname以/开头
         if not api_path.startswith('/'):
             api_path = '/' + api_path
+        
+        # 如果pathname还没有包含baseurl路径，尝试从signoz_config中获取并组合
+        if not api_info.get('pathname') and api_info.get('api_path'):
+            # 如果只有api_path，尝试从signoz_config中获取base_url并组合
+            base_url = signoz_config.get('base_url')
+            if base_url:
+                from urllib.parse import urlparse
+                try:
+                    parsed = urlparse(base_url)
+                    base_path = parsed.path
+                    if base_path and base_path != '/':
+                        api_path = base_path.rstrip('/') + api_path
+                except Exception:
+                    pass
+        
         api_filter = {
             'key': build_field_spec('request.pathname', 'logs'),
             'value': [api_path],

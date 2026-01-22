@@ -634,20 +634,24 @@ def build_field_spec(field_path: str, signal: str = 'logs') -> dict:
     """
     构建字段规范（用于Query Builder）
     
+    ⚠️ 注意：SigNoz查询时，attributes、resource这些是不需要传入的
+    只需要传入字段名称即可，SigNoz会自动识别字段的上下文
+    
     Args:
         field_path: 字段路径
         signal: 信号类型（logs, traces, metrics）
     
     Returns:
-        字段规范字典
+        字段规范字典（不包含fieldContext）
     """
     field_def = parse_field_path(field_path)
     
+    # 只返回字段名称和数据类型，不包含fieldContext
     return {
         'name': field_def['name'],
         'fieldDataType': field_def.get('fieldDataType', 'string'),
-        'signal': signal,
-        'fieldContext': field_def['fieldContext']
+        'signal': signal
+        # 注意：不包含fieldContext，SigNoz会自动识别
     }
 
 

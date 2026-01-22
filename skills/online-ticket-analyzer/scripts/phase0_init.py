@@ -160,8 +160,11 @@ def generate_signoz_config_with_ai(project_path: str) -> Optional[Dict[str, Any]
     print("\n请执行以下操作：")
     print("1. 让AI通读整个项目代码，从整体项目视角查找以下信息：")
     print("   a. SigNoz初始化代码位置（通常在 src/libs/signoz.ts 等位置）")
-    print("   b. 从所有环境变量文件（.env, .env.local, .env.production, .env.online等）中提取：")
-    print("      - 读取所有环境变量文件，获取所有实际值（不仅仅是当前工单需要的）")
+    print("   b. 从打包配置（vite.config.ts, webpack.config.js等）中获取环境变量：")
+    print("      ⚠️ 重要：环境变量的值应该从打包配置中获取，而不是直接从.env文件读取")
+    print("      - 读取打包配置文件，查找loadEnv调用（Vite）或DefinePlugin配置（Webpack）")
+    print("      - 根据打包配置的mode和prefix参数，从对应的.env文件中获取实际值")
+    print("      - 或者从打包配置的define配置中获取实际值")
     print("      - base_url: API基础URL（从VITE_BASE_URL, REACT_APP_BASE_URL, BASE_URL等）")
     print("      - 所有API baseUrl配置（如VITE_SAPI_DOMESTIC, VITE_SAPI_FOREIGN, VITE_UAPI等）")
     print("      - appVersion: 从APP_VERSION或VITE_APP_VERSION获取实际值")
@@ -180,14 +183,19 @@ def generate_signoz_config_with_ai(project_path: str) -> Optional[Dict[str, Any]
     print("      - 识别所有baseUrl的配置方式（从config读取、环境变量等）")
     print("      - 记录所有baseUrl可能包含的路径前缀（如/sync, /api等）")
     print("      - 了解项目的API路由规则和路径组合逻辑")
-    print("\n⚠️  重要：环境变量的值必须从.env文件中读取实际值，不能直接使用import.meta.env.XXX")
-    print("   例如：如果代码中是 import.meta.env.APP_VERSION，需要查找.env文件中的APP_VERSION或VITE_APP_VERSION的实际值")
+    print("\n⚠️  重要：环境变量的值必须从打包配置中获取，而不是直接从.env文件读取")
+    print("   打包配置（如vite.config.ts）会使用loadEnv等方法加载.env文件，并在构建时处理环境变量")
+    print("   例如：如果代码中是 import.meta.env.VITE_SAPI_DOMESTIC，需要：")
+    print("   1) 读取vite.config.ts，查找loadEnv调用")
+    print("   2) 根据loadEnv的mode和prefix参数，从对应的.env文件中获取实际值")
+    print("   3) 或者从vite.config.ts的define配置中获取实际值")
         print("\n⚠️  重要：接口路径识别需要通读代码，追踪createRequest等方法，找到baseUrl的来源")
         print("   例如：如果代码中是 createRequest('SAPI_DOMESTIC').post('/revert_dir_list', ...)")
         print("   需要：1) 识别pathname: /revert_dir_list")
         print("        2) 追踪createRequest方法，找到baseUrl从config.api['SAPI_DOMESTIC']读取")
         print("        3) 查找config中SAPI_DOMESTIC的定义，发现来自import.meta.env.VITE_SAPI_DOMESTIC")
-        print("        4) 从.env.online文件中读取VITE_SAPI_DOMESTIC的实际值")
+        print("        4) 从打包配置（vite.config.ts）中获取VITE_SAPI_DOMESTIC的实际值")
+        print("          （打包配置会使用loadEnv加载.env文件，根据mode和prefix获取实际值）")
         print("        5) 解析baseUrl，提取路径部分（如https://cs8.intsig.net/sync → /sync）")
         print("        6) 组合完整pathname: /sync + /revert_dir_list = /sync/revert_dir_list")
         print("\n⚠️  重要：要从整体项目视角生成，包含所有可能用到的配置，不仅仅是当前工单需要的")
@@ -661,10 +669,19 @@ def scan_code_for_env_usage(project_root: Path, signoz_init_file: Optional[Path]
     扫描代码中环境变量的使用情况
     
     查找代码中使用的环境变量（如import.meta.env.VITE_XXX, process.env.XXX等）
-    并尝试从环境变量文件中获取实际值
+    并尝试从打包配置中获取实际值（优先），如果打包配置中没有，才从环境变量文件获取（后备）
+    
+    ⚠️ 重要：环境变量的值应该从打包配置中获取，而不是直接从.env文件读取
     """
     env_usage = {}
+    # 优先从打包配置中获取环境变量
+    build_config = scan_build_config(project_root)
+    env_vars_from_build = build_config.get('env_vars', {})
+    # 如果打包配置中没有，才从.env文件读取（作为后备）
     env_vars = scan_environment_variables(project_root)
+    # 合并：优先使用打包配置中的值
+    for key, value in env_vars_from_build.items():
+        env_vars[key] = value
     
     # 如果提供了signoz初始化文件，优先扫描该文件
     files_to_scan = []
@@ -850,8 +867,14 @@ def trace_api_pathname_from_code(project_root: Path, api_call_text: str) -> Opti
 
 
 def scan_build_config(project_root: Path) -> Dict[str, Any]:
-    """扫描打包配置文件（vite.config, webpack.config等）"""
+    """
+    扫描打包配置文件（vite.config, webpack.config等）
+    
+    重要：环境变量的值应该从打包配置中获取，而不是直接从.env文件读取
+    打包配置会使用loadEnv等方法加载.env文件，并在构建时处理环境变量
+    """
     build_config = {}
+    env_vars_from_build = {}  # 从打包配置中获取的环境变量
     
     # 查找vite.config文件
     vite_config_files = [
@@ -867,10 +890,83 @@ def scan_build_config(project_root: Path) -> Dict[str, Any]:
             try:
                 content = config_file.read_text(encoding='utf-8')
                 import re
+                
                 # 查找base URL配置
                 base_match = re.search(r'base\s*[:=]\s*["\']([^"\']+)["\']', content)
                 if base_match:
                     build_config['base_url'] = base_match.group(1)
+                
+                # 查找loadEnv调用（Vite加载环境变量的方式）
+                # loadEnv(mode, process.cwd(), '') 或 loadEnv(mode, root, prefix)
+                load_env_patterns = [
+                    r'loadEnv\s*\(\s*["\']?(\w+)["\']?\s*,\s*[^,]+,\s*["\']?([^"\']*)["\']?\s*\)',  # loadEnv(mode, root, prefix)
+                    r'loadEnv\s*\(\s*["\']?(\w+)["\']?\s*,\s*[^,]+\)',  # loadEnv(mode, root)
+                ]
+                
+                for pattern in load_env_patterns:
+                    matches = re.findall(pattern, content)
+                    if matches:
+                        for match in matches:
+                            if isinstance(match, tuple):
+                                mode = match[0] if match[0] else 'production'
+                                prefix = match[1] if len(match) > 1 and match[1] else 'VITE_'
+                            else:
+                                mode = match if match else 'production'
+                                prefix = 'VITE_'
+                            
+                            # 根据mode和prefix加载环境变量
+                            # Vite的loadEnv会按优先级加载：.env.[mode].local > .env.[mode] > .env.local > .env
+                            env_files_priority = [
+                                f'.env.{mode}.local',
+                                f'.env.{mode}',
+                                '.env.local',
+                                '.env'
+                            ]
+                            
+                            # 从环境文件中读取，但只读取符合prefix的变量
+                            for env_file_name in env_files_priority:
+                                env_file = project_root / env_file_name
+                                if env_file.exists():
+                                    try:
+                                        with open(env_file, 'r', encoding='utf-8') as f:
+                                            for line in f:
+                                                line = line.strip()
+                                                if not line or line.startswith('#'):
+                                                    continue
+                                                if '=' in line:
+                                                    key, value = line.split('=', 1)
+                                                    key = key.strip()
+                                                    value = value.strip().strip('"').strip("'")
+                                                    # 只加载符合prefix的变量（Vite默认只暴露VITE_前缀的变量）
+                                                    if key.startswith(prefix):
+                                                        # 如果key已存在，不覆盖（优先使用高优先级文件的值）
+                                                        if key not in env_vars_from_build:
+                                                            env_vars_from_build[key] = value
+                                    except Exception:
+                                        continue
+                            
+                            build_config['load_env_mode'] = mode
+                            build_config['load_env_prefix'] = prefix
+                            break
+                
+                # 查找define配置（可能直接定义环境变量）
+                # define: { 'import.meta.env.XXX': JSON.stringify('value') }
+                define_pattern = r'define\s*:\s*\{([^}]+)\}'
+                define_match = re.search(define_pattern, content, re.DOTALL)
+                if define_match:
+                    define_content = define_match.group(1)
+                    # 查找 import.meta.env.XXX: JSON.stringify('value')
+                    env_define_pattern = r'["\']import\.meta\.env\.([A-Z_][A-Z0-9_]*)["\']\s*:\s*JSON\.stringify\(["\']([^"\']+)["\']\)'
+                    env_defines = re.findall(env_define_pattern, define_content)
+                    for env_key, env_value in env_defines:
+                        vite_key = f'VITE_{env_key}' if not env_key.startswith('VITE_') else env_key
+                        if vite_key not in env_vars_from_build:
+                            env_vars_from_build[vite_key] = env_value
+                
+                # 查找envPrefix配置（环境变量前缀）
+                env_prefix_match = re.search(r'envPrefix\s*[:=]\s*["\']([^"\']+)["\']', content)
+                if env_prefix_match:
+                    build_config['env_prefix'] = env_prefix_match.group(1)
                 
                 # 查找环境变量引用
                 env_refs = re.findall(r'process\.env\.(\w+)|import\.meta\.env\.(\w+)', content)
@@ -880,6 +976,10 @@ def scan_build_config(project_root: Path) -> Dict[str, Any]:
                         build_config.setdefault('env_refs', []).append(env_key)
             except Exception:
                 continue
+    
+    # 如果从打包配置中获取到了环境变量，使用它们
+    if env_vars_from_build:
+        build_config['env_vars'] = env_vars_from_build
     
     # 查找webpack.config文件
     webpack_config_files = [
@@ -899,8 +999,25 @@ def scan_build_config(project_root: Path) -> Dict[str, Any]:
                 public_path_match = re.search(r'publicPath\s*[:=]\s*["\']([^"\']+)["\']', content)
                 if public_path_match:
                     build_config['public_path'] = public_path_match.group(1)
+                
+                # Webpack可能使用DefinePlugin定义环境变量
+                # new webpack.DefinePlugin({ 'process.env.XXX': JSON.stringify('value') })
+                define_plugin_pattern = r'DefinePlugin\s*\(\s*\{([^}]+)\}\)'
+                define_plugin_match = re.search(define_plugin_pattern, content, re.DOTALL)
+                if define_plugin_match:
+                    plugin_content = define_plugin_match.group(1)
+                    # 查找 process.env.XXX: JSON.stringify('value')
+                    env_define_pattern = r'["\']process\.env\.([A-Z_][A-Z0-9_]*)["\']\s*:\s*JSON\.stringify\(["\']([^"\']+)["\']\)'
+                    env_defines = re.findall(env_define_pattern, plugin_content)
+                    for env_key, env_value in env_defines:
+                        if env_key not in env_vars_from_build:
+                            env_vars_from_build[env_key] = env_value
             except Exception:
                 continue
+    
+    # 如果从打包配置中获取到了环境变量，更新build_config
+    if env_vars_from_build:
+        build_config['env_vars'] = env_vars_from_build
     
     return build_config
 
