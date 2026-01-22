@@ -200,7 +200,14 @@ def generate_mcp_instructions(
 1. 必须首先执行 list_services 获取服务列表，确认服务名称
 2. 根据服务名称和查询条件，使用 execute_builder_query 执行具体查询
 3. 在Query Builder中添加 service.name 过滤条件，提高查询成功率
-4. 查询结果保存到 mcp_results.json 文件中
+4. ⚠️ 重要：查询时不要添加fieldContext字段，SigNoz会自动识别字段上下文
+5. ⚠️ 重要：确保formatTableResultForUI设置为true，以便正确显示结果
+6. ⚠️ 重要：如果查询结果为空，尝试：
+   - 检查时间范围是否正确
+   - 检查服务名称是否准确（使用list_services获取的实际服务名）
+   - 检查字段名称是否正确（如user.id是int64类型，确保值类型匹配）
+   - 尝试简化查询条件，逐步添加过滤条件
+7. 查询结果保存到 mcp_results.json 文件中
 """
     
     # 保存指令文件
@@ -255,14 +262,18 @@ def build_error_logs_query(
                         'order': [
                             {
                                 'key': {
-                                    'name': 'timestamp'
+                                    'name': 'timestamp',
+                                    'fieldDataType': 'int64',
+                                    'signal': 'logs'
                                 },
                                 'direction': 'desc'
                             }
                         ],
                         'selectFields': [
                             build_field_spec('service.name', 'logs'),
+                            build_field_spec('body', 'logs'),  # 添加body字段，这是最常用的日志内容字段
                             build_field_spec('pathname', 'logs'),
+                            build_field_spec('request.pathname', 'logs'),  # 添加request.pathname，用于API路径查询
                             build_field_spec('message', 'logs'),
                             build_field_spec('stack', 'logs'),
                             build_field_spec('severity_text', 'logs'),
@@ -300,27 +311,38 @@ def build_error_logs_query(
     }
     
     # 添加服务过滤（如果有）
-    # 注意：平台支持前缀匹配（如 service.name IN cs....），但Query Builder需要精确匹配
+    # ⚠️ 注意：平台支持前缀匹配（如 service.name IN cs....），但Query Builder需要精确匹配
     # 如果有多个服务或需要前缀匹配，可以添加多个条件
+    # ⚠️ 重要：如果list_services返回空，可能是时间范围问题，尝试扩大时间范围或使用最近24小时
     services = ticket_info.get('services', [])
     if services:
         # 如果服务名看起来像前缀（以点结尾），需要特殊处理
         # 但Query Builder不支持前缀匹配，所以只使用精确匹配
+        # 确保服务名是列表格式
+        service_values = services if isinstance(services, list) else [services]
         service_filter = {
             'key': build_field_spec('service.name', 'logs'),
-            'value': services,
+            'value': service_values,
             'op': 'in'
         }
         query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(service_filter)
     
     # 添加用户信息过滤（如果有）
-    # 注意：实际字段名是user.id，不是user_id
+    # ⚠️ 注意：user.id字段类型是int64，但值可能是字符串或数字
+    # 需要确保类型匹配，如果user_id是字符串形式的数字，需要转换为int
     user_info = ticket_info.get('user_info', {})
     user_id = user_info.get('user.id') or user_info.get('user_id')
     if user_id:
+        # 尝试转换为int（因为user.id字段类型是int64）
+        try:
+            user_id_value = int(user_id) if isinstance(user_id, str) else user_id
+        except (ValueError, TypeError):
+            # 如果转换失败，使用原始值
+            user_id_value = user_id
+        
         user_filter = {
             'key': build_field_spec('user.id', 'logs'),
-            'value': [str(user_id)],
+            'value': [user_id_value],  # 使用转换后的值
             'op': 'in'
         }
         query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(user_filter)
@@ -381,7 +403,9 @@ def build_service_logs_query(
     # 优先包含平台查询结果中常用的字段
     priority_fields = [
         'service.name',
+        'body',  # 添加body字段，这是最常用的日志内容字段
         'pathname',
+        'request.pathname',  # 添加request.pathname，用于API路径查询
         'message',
         'stack',
         'severity_text',
@@ -424,7 +448,9 @@ def build_service_logs_query(
                         'order': [
                             {
                                 'key': {
-                                    'name': 'timestamp'
+                                    'name': 'timestamp',
+                                    'fieldDataType': 'int64',
+                                    'signal': 'logs'
                                 },
                                 'direction': 'desc'
                             }
@@ -436,7 +462,7 @@ def build_service_logs_query(
                             'items': [
                                 {
                                     'key': build_field_spec('service.name', 'logs'),
-                                    'value': [service],
+                                    'value': [service] if isinstance(service, str) else service,
                                     'op': 'in'
                                 }
                             ],
@@ -454,13 +480,21 @@ def build_service_logs_query(
     }
     
     # 添加用户信息过滤（如果有）
-    # 注意：实际字段名是user.id，不是user_id
+    # ⚠️ 注意：user.id字段类型是int64，但值可能是字符串或数字
+    # 需要确保类型匹配，如果user_id是字符串形式的数字，需要转换为int
     user_info = ticket_info.get('user_info', {})
     user_id = user_info.get('user.id') or user_info.get('user_id')
     if user_id:
+        # 尝试转换为int（因为user.id字段类型是int64）
+        try:
+            user_id_value = int(user_id) if isinstance(user_id, str) else user_id
+        except (ValueError, TypeError):
+            # 如果转换失败，使用原始值
+            user_id_value = user_id
+        
         user_filter = {
             'key': build_field_spec('user.id', 'logs'),
-            'value': [str(user_id)],
+            'value': [user_id_value],  # 使用转换后的值
             'op': 'in'
         }
         query['compositeQuery']['queries'][0]['spec']['filters']['items'].append(user_filter)

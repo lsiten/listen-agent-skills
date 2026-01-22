@@ -420,8 +420,8 @@ SIGNOZ_COMMON_FIELDS = {
     'user.id': {
         'name': 'user.id',
         'fieldContext': FIELD_CONTEXT_ATTRIBUTES,
-        'fieldDataType': 'string',
-        'description': '用户ID（实际字段名：user.id）'
+        'fieldDataType': 'int64',  # ⚠️ 修正：user.id字段类型是int64，不是string
+        'description': '用户ID（实际字段名：user.id，类型：int64）'
     },
     'user.client_id': {
         'name': 'user.client_id',

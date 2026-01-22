@@ -178,31 +178,60 @@ def generate_signoz_config_with_ai(project_path: str) -> Optional[Dict[str, Any]
     print("      - appVersion: 如果使用import.meta.env.APP_VERSION，需要读取.env文件获取实际值")
     print("      - env: 如果使用import.meta.env.VITE_ENV，需要读取.env文件获取实际值")
     print("      - 所有其他配置项")
-    print("   e. 接口路径识别配置（从整体项目视角）：")
-    print("      - 查找所有API调用模式（如createRequest, axios等）")
-    print("      - 识别所有baseUrl的配置方式（从config读取、环境变量等）")
-    print("      - 记录所有baseUrl可能包含的路径前缀（如/sync, /api等）")
-    print("      - 了解项目的API路由规则和路径组合逻辑")
+    print("   e. ⚠️ 所有工单查询关键信息识别配置（从整体项目视角，必须由AI通读代码完成）：")
+    print("      ⚠️ 重要：所有工单查询需要的关键信息，必须通过AI阅读完整项目后，")
+    print("      综合配置信息、环境配置、打包配置给出，而不是简单的正则匹配")
+    print("      ")
+    print("      必须完成的工作包括：")
+    print("      1) ⚠️ 接口路径识别（api_pathname_mapping）：")
+    print("         - 通读项目代码，查找所有API调用位置（如createRequest, axios等）")
+    print("         - 对于每个API调用，追踪其baseUrl的来源：")
+    print("           * 追踪createRequest等方法，找到baseUrl从config读取的位置")
+    print("           * 查找config中baseUrl的定义，追踪到环境变量（如import.meta.env.XXX）")
+    print("           * 从打包配置（vite.config.ts）中获取环境变量的实际值")
+    print("           * 解析baseUrl，提取路径部分（如https://cs8.intsig.net/sync → /sync）")
+    print("         - 组合完整pathname：baseUrl路径部分 + API相对路径")
+    print("         - 生成api_pathname_mapping配置，包含所有API的完整pathname映射")
+    print("      ")
+    print("      2) ⚠️ 字段提取规则识别（field_extraction_rules）：")
+    print("         - 通读项目代码，查找所有字段的使用方式")
+    print("         - 了解项目中字段的实际命名规则（如user.id, user.client_id等）")
+    print("         - 了解用户输入中可能出现的字段名称变体（如\"用户ID\"、\"UserID\"、\"user_id\"等）")
+    print("         - 生成field_extraction_rules配置，映射用户输入模式到实际字段名")
+    print("      ")
+    print("      3) ⚠️ 服务名称映射识别（service_name_mapping）：")
+    print("         - 通读项目代码，查找所有服务的定义和使用")
+    print("         - 了解项目中服务的实际命名规则（如service.name的值）")
+    print("         - 了解用户输入中可能出现的服务名称变体（如\"用户服务\"、\"UserService\"等）")
+    print("         - 生成service_name_mapping配置，映射用户输入模式到实际service.name")
+    print("      ")
+    print("      4) ⚠️ 其他关键信息识别：")
+    print("         - 通读项目代码，识别所有可能用于工单查询的关键信息")
+    print("         - 了解这些信息在代码中的实际使用方式和命名规则")
+    print("         - 生成相应的映射配置，确保从用户输入到实际查询字段的准确转换")
+    print("      ")
+    print("      示例流程（必须完整执行）：")
+    print("      如果代码中是 createRequest('SAPI_DOMESTIC').post('/revert_dir_list', ...)")
+    print("      需要：1) 识别API相对路径: /revert_dir_list")
+    print("           2) 追踪createRequest方法，找到baseUrl从config.api['SAPI_DOMESTIC']读取")
+    print("           3) 查找config中SAPI_DOMESTIC的定义，发现来自import.meta.env.VITE_SAPI_DOMESTIC")
+    print("           4) 从打包配置（vite.config.ts）中获取VITE_SAPI_DOMESTIC的实际值")
+    print("              （打包配置会使用loadEnv加载.env文件，根据mode和prefix获取实际值）")
+    print("           5) 解析baseUrl，提取路径部分（如https://cs8.intsig.net/sync → /sync）")
+    print("           6) 组合完整pathname: /sync + /revert_dir_list = /sync/revert_dir_list")
+    print("           7) 在api_pathname_mapping中记录: {\"/revert_dir_list\": \"/sync/revert_dir_list\", ...}")
     print("\n⚠️  重要：环境变量的值必须从打包配置中获取，而不是直接从.env文件读取")
     print("   打包配置（如vite.config.ts）会使用loadEnv等方法加载.env文件，并在构建时处理环境变量")
     print("   例如：如果代码中是 import.meta.env.VITE_SAPI_DOMESTIC，需要：")
     print("   1) 读取vite.config.ts，查找loadEnv调用")
     print("   2) 根据loadEnv的mode和prefix参数，从对应的.env文件中获取实际值")
     print("   3) 或者从vite.config.ts的define配置中获取实际值")
-        print("\n⚠️  重要：接口路径识别需要通读代码，追踪createRequest等方法，找到baseUrl的来源")
-        print("   例如：如果代码中是 createRequest('SAPI_DOMESTIC').post('/revert_dir_list', ...)")
-        print("   需要：1) 识别pathname: /revert_dir_list")
-        print("        2) 追踪createRequest方法，找到baseUrl从config.api['SAPI_DOMESTIC']读取")
-        print("        3) 查找config中SAPI_DOMESTIC的定义，发现来自import.meta.env.VITE_SAPI_DOMESTIC")
-        print("        4) 从打包配置（vite.config.ts）中获取VITE_SAPI_DOMESTIC的实际值")
-        print("          （打包配置会使用loadEnv加载.env文件，根据mode和prefix获取实际值）")
-        print("        5) 解析baseUrl，提取路径部分（如https://cs8.intsig.net/sync → /sync）")
-        print("        6) 组合完整pathname: /sync + /revert_dir_list = /sync/revert_dir_list")
-        print("\n⚠️  重要：要从整体项目视角生成，包含所有可能用到的配置，不仅仅是当前工单需要的")
-        print("   - 包含所有API类型的baseUrl配置")
-        print("   - 包含所有环境变量的实际值")
-        print("   - 包含项目中使用的所有字段")
-        print("   - 包含所有服务的名称映射")
+    print("\n⚠️  重要：要从整体项目视角生成，包含所有可能用到的配置，不仅仅是当前工单需要的")
+    print("   - 包含所有API类型的baseUrl配置")
+    print("   - 包含所有环境变量的实际值")
+    print("   - 包含项目中使用的所有字段")
+    print("   - 包含所有服务的名称映射")
+    print("   - 包含完整的api_pathname_mapping（所有API的完整pathname映射）")
     print("\n⚠️  重要：要从整体项目视角生成，包含所有可能用到的配置，不仅仅是当前工单需要的")
     print("\n2. 分析SigNoz配置，从整体项目视角提取以下信息：")
     print("   - init_code_location: SigNoz初始化代码位置")
@@ -212,6 +241,21 @@ def generate_signoz_config_with_ai(project_path: str) -> Optional[Dict[str, Any]
     print("   - api_baseurls: 所有API baseUrl配置（字典格式，包含项目中所有API类型的baseUrl）")
     print("     例如：{\"SAPI_DOMESTIC\": \"https://cs8.intsig.net/sync\", \"SAPI_FOREIGN\": \"...\", \"UAPI\": \"...\", ...}")
     print("     注意：包含所有可能用到的API baseUrl，不仅仅是当前工单需要的")
+    print("   - api_pathname_mapping: ⚠️ 所有API的完整pathname映射（必须由AI通读代码生成）")
+    print("     格式：{\"相对路径\": \"完整pathname\", ...}")
+    print("     例如：{\"/revert_dir_list\": \"/sync/revert_dir_list\", \"/revert_pre_check\": \"/sync/revert_pre_check\", ...}")
+    print("     注意：这是必须准确的信息，必须通过AI阅读完整项目后，综合配置信息、环境配置、打包配置给出")
+    print("     不能使用简单的正则匹配，必须追踪代码逻辑，找到baseUrl的来源，然后组合完整pathname")
+    print("   - field_extraction_rules: ⚠️ 字段提取规则映射（必须由AI通读代码生成）")
+    print("     格式：{\"字段类型\": {\"用户输入模式\": \"实际字段名\", ...}, ...}")
+    print("     例如：{\"user_id\": {\"用户ID\": \"user.id\", \"UserID\": \"user.id\", \"user_id\": \"user.id\"}, ...}")
+    print("     注意：这是必须准确的信息，必须通过AI阅读完整项目后，了解项目中使用的字段命名规则")
+    print("     不能使用简单的正则匹配，必须通读代码，了解字段的实际使用方式")
+    print("   - service_name_mapping: ⚠️ 服务名称映射规则（必须由AI通读代码生成）")
+    print("     格式：{\"用户输入模式\": \"实际service.name\", ...}")
+    print("     例如：{\"用户服务\": \"user-service\", \"UserService\": \"user-service\", ...}")
+    print("     注意：这是必须准确的信息，必须通过AI阅读完整项目后，了解项目中使用的服务名称")
+    print("     不能使用简单的正则匹配，必须通读代码，了解服务的实际命名规则")
     print("   - signoz_env_vars: 所有SigNoz相关环境变量（字典格式，包含实际值）")
     print("   - fields: 项目中使用的所有字段列表（不仅仅是当前工单涉及的字段）")
     print("   - common_query_fields: 公共查询字段（适用于所有工单的常用字段）")
@@ -231,6 +275,31 @@ def generate_signoz_config_with_ai(project_path: str) -> Optional[Dict[str, Any]
     "VITE_SAPI_FOREIGN": "https://cs8.intsig.net/sync",
     "VITE_UAPI": "https://cs8.intsig.net/uapi",
     "VITE_OAPI": "https://cs8.intsig.net/oapi"
+  },
+  "api_pathname_mapping": {
+    "/revert_dir_list": "/sync/revert_dir_list",
+    "/revert_pre_check": "/sync/revert_pre_check",
+    "/revert_pre_fix": "/sync/revert_pre_fix"
+  },
+  "field_extraction_rules": {
+    "user_id": {
+      "用户ID": "user.id",
+      "UserID": "user.id",
+      "user_id": "user.id",
+      "userId": "user.id"
+    },
+    "client_id": {
+      "设备ID": "user.client_id",
+      "DeviceID": "user.client_id",
+      "client_id": "user.client_id",
+      "clientId": "user.client_id",
+      "设备号": "user.client_id"
+    }
+  },
+  "service_name_mapping": {
+    "用户服务": "user-service",
+    "UserService": "user-service",
+    "用户": "user-service"
   },
   "signoz_env_vars": {
     "VITE_SIGNOZ_ENDPOINT": "https://signoz.example.com",

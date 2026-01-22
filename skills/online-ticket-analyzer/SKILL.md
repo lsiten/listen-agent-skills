@@ -256,6 +256,9 @@ python scripts/analyze_ticket.py \
    - ✅ 优点：字段路径更直观，不需要 attributes. 前缀
    - ✅ 优点：支持多条件组合查询
    - ⚠️ 注意：需要构建完整的 Query Builder v5 JSON 结构
+   - ⚠️ 重要：查询时不要添加fieldContext字段，SigNoz会自动识别字段上下文
+   - ⚠️ 重要：确保formatTableResultForUI设置为true，以便正确显示结果
+   - ⚠️ 重要：确保字段类型匹配（如user.id是int64类型，值也应该是数字）
 
 2. **search_logs_by_service** - 备选方案
    - ⚠️ 缺点：需要先获取服务列表（list_services）
@@ -344,14 +347,12 @@ python scripts/analyze_ticket.py \
                     {
                       "name": "service.name",
                       "fieldDataType": "string",
-                      "signal": "logs",
-                      "fieldContext": "resource"
+                      "signal": "logs"
                     },
                     {
                       "name": "body",
                       "fieldDataType": "string",
-                      "signal": "logs",
-                      "fieldContext": "attributes"
+                      "signal": "logs"
                     }
                   ],
                   "filters": {
@@ -360,10 +361,9 @@ python scripts/analyze_ticket.py \
                         "key": {
                           "name": "service.name",
                           "fieldDataType": "string",
-                          "signal": "logs",
-                          "fieldContext": "resource"
+                          "signal": "logs"
                         },
-                        "value": "user-service",
+                        "value": ["user-service"],
                         "op": "in"
                       }
                     ],
@@ -884,6 +884,138 @@ MCP查询返回的结果通常具有以下结构：
 3. **服务信息**：存储在 `resources` 对象中，不是 `resource`（注意复数形式）
 4. **地理位置**：使用 `geo.` 前缀的嵌套字段
 5. **字段路径**：使用点分隔的嵌套路径，如 `user.id`, `user.client_id`, `geo.city_name`
+
+### 关键信息识别流程
+
+⚠️ **重要**：所有工单查询需要的关键信息，必须通过AI阅读完整项目后，综合配置信息、环境配置、打包配置给出，而不是简单的正则匹配。
+
+在生成SigNoz配置时，AI必须通读项目代码，了解所有关键信息的实际使用方式和命名规则，生成准确的映射配置。
+
+**关键信息包括**：
+1. **接口路径（api_pathname_mapping）**：API的完整pathname映射
+2. **字段提取规则（field_extraction_rules）**：用户输入模式到实际字段名的映射
+3. **服务名称映射（service_name_mapping）**：用户输入模式到实际service.name的映射
+4. **其他关键信息**：所有可能用于工单查询的信息
+
+#### 1. 接口路径识别流程
+
+⚠️ **重要**：pathname识别是必须准确的信息，必须通过AI阅读完整项目后，综合配置信息、环境配置、打包配置给出，而不是简单的正则匹配。
+
+在生成SigNoz配置时，AI必须通读项目代码，追踪API调用，找到baseUrl的来源，然后组合完整pathname。
+
+**流程**（必须完整执行，不能使用简单的正则匹配）：
+
+1. **通读项目代码**：查找所有API调用位置（如`.post('/revert_dir_list', ...)`、`createRequest('SAPI_DOMESTIC').post(...)`等）
+2. **追踪createRequest方法**：对于每个API调用，追踪其baseUrl的来源
+   - 找到baseUrl从config读取的位置（如`config.api['SAPI_DOMESTIC']`）
+   - 查找config中baseUrl的定义，追踪到环境变量（如`import.meta.env.VITE_SAPI_DOMESTIC`）
+3. **从打包配置获取环境变量值**：读取打包配置（vite.config.ts），查找loadEnv调用，根据mode和prefix从对应的.env文件中获取实际值
+4. **解析baseUrl**：提取baseUrl的路径部分（如`https://cs8.intsig.net/sync` → `/sync`）
+5. **组合完整pathname**：baseUrl路径部分 + API相对路径 = 完整pathname（如`/sync/revert_dir_list`）
+6. **生成api_pathname_mapping**：在signoz_config.json中生成完整的pathname映射
+   ```json
+   {
+     "api_pathname_mapping": {
+       "/revert_dir_list": "/sync/revert_dir_list",
+       "/revert_pre_check": "/sync/revert_pre_check",
+       "/revert_pre_fix": "/sync/revert_pre_fix"
+     }
+   }
+   ```
+
+**⚠️ 重要**：
+- 不能使用简单的正则匹配来识别pathname
+- 必须通读项目代码，追踪代码逻辑，找到baseUrl的来源
+- 必须综合配置信息、环境配置、打包配置给出准确的pathname
+- 在parse_input阶段，优先使用AI生成的api_pathname_mapping，而不是重新匹配
+
+#### 2. 字段提取规则识别流程
+
+⚠️ **重要**：字段提取规则识别是必须准确的信息，必须通过AI阅读完整项目后，了解字段的实际命名规则。
+
+**流程**（必须完整执行，不能使用简单的正则匹配）：
+
+1. **通读项目代码**：查找所有字段的使用方式（如user.id, user.client_id等）
+2. **了解字段命名规则**：了解项目中字段的实际命名规则和嵌套结构
+3. **了解用户输入变体**：了解用户输入中可能出现的字段名称变体（如"用户ID"、"UserID"、"user_id"等）
+4. **生成field_extraction_rules配置**：在signoz_config.json中生成完整的字段提取规则映射
+   ```json
+   {
+     "field_extraction_rules": {
+       "user_id": {
+         "用户ID": "user.id",
+         "UserID": "user.id",
+         "user_id": "user.id",
+         "userId": "user.id"
+       },
+       "client_id": {
+         "设备ID": "user.client_id",
+         "DeviceID": "user.client_id",
+         "client_id": "user.client_id",
+         "clientId": "user.client_id",
+         "设备号": "user.client_id"
+       }
+     }
+   }
+   ```
+
+**⚠️ 重要**：
+- 不能使用简单的正则匹配来识别字段
+- 必须通读项目代码，了解字段的实际使用方式
+- 必须综合配置信息、环境配置、打包配置给出准确的字段映射
+- 在parse_input阶段，优先使用AI生成的field_extraction_rules，而不是重新匹配
+
+#### 3. 服务名称映射识别流程
+
+⚠️ **重要**：服务名称映射识别是必须准确的信息，必须通过AI阅读完整项目后，了解服务的实际命名规则。
+
+**流程**（必须完整执行，不能使用简单的正则匹配）：
+
+1. **通读项目代码**：查找所有服务的定义和使用
+2. **了解服务命名规则**：了解项目中服务的实际命名规则（如service.name的值）
+3. **了解用户输入变体**：了解用户输入中可能出现的服务名称变体（如"用户服务"、"UserService"等）
+4. **生成service_name_mapping配置**：在signoz_config.json中生成完整的服务名称映射
+   ```json
+   {
+     "service_name_mapping": {
+       "用户服务": "user-service",
+       "UserService": "user-service",
+       "用户": "user-service"
+     }
+   }
+   ```
+
+**⚠️ 重要**：
+- 不能使用简单的正则匹配来识别服务名称
+- 必须通读项目代码，了解服务的实际命名规则
+- 必须综合配置信息、环境配置、打包配置给出准确的服务名称映射
+- 在parse_input阶段，优先使用AI生成的service_name_mapping，而不是重新匹配
+
+#### 4. 其他关键信息识别
+
+⚠️ **重要**：所有可能用于工单查询的关键信息，都必须通过AI阅读完整项目后，了解其实际使用方式和命名规则。
+
+**流程**：
+1. **通读项目代码**：识别所有可能用于工单查询的关键信息
+2. **了解实际使用方式**：了解这些信息在代码中的实际使用方式和命名规则
+3. **生成映射配置**：生成相应的映射配置，确保从用户输入到实际查询字段的准确转换
+
+**⚠️ 重要**：
+- 不能使用简单的正则匹配来识别关键信息
+- 必须通读项目代码，了解信息的实际使用方式
+- 必须综合配置信息、环境配置、打包配置给出准确的信息映射
+- 在parse_input阶段，优先使用AI生成的映射配置，而不是重新匹配
+
+**示例流程**（必须完整执行）：
+如果代码中是 `createRequest('SAPI_DOMESTIC').post('/revert_dir_list', ...)`
+需要：
+1. 识别API相对路径: `/revert_dir_list`
+2. 追踪createRequest方法，找到baseUrl从`config.api['SAPI_DOMESTIC']`读取
+3. 查找config中SAPI_DOMESTIC的定义，发现来自`import.meta.env.VITE_SAPI_DOMESTIC`
+4. 从打包配置（vite.config.ts）中获取VITE_SAPI_DOMESTIC的实际值（打包配置会使用loadEnv加载.env文件，根据mode和prefix获取实际值）
+5. 解析baseUrl，提取路径部分（如`https://cs8.intsig.net/sync` → `/sync`）
+6. 组合完整pathname: `/sync` + `/revert_dir_list` = `/sync/revert_dir_list`
+7. 在api_pathname_mapping中记录: `{"/revert_dir_list": "/sync/revert_dir_list", ...}`
 
 ### @ccint/signoz 初始化配置
 

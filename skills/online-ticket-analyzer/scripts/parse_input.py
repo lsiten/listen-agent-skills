@@ -107,9 +107,13 @@ def extract_ticket_info(user_input: str, project_path: Optional[str] = None) -> 
     """
     从用户输入中提取工单信息
     
+    ⚠️ 重要：此函数只是辅助提取，真正的关键信息识别必须由AI在Phase 0阶段完成
+    AI会通读项目代码，了解字段命名规则、服务名称规则、API路径规则等
+    如果signoz_config中存在相应的映射配置，优先使用AI生成的准确映射
+    
     Args:
         user_input: 用户输入文本
-        project_path: 项目路径（用于获取baseurl配置，用于接口路径识别）
+        project_path: 项目路径（用于获取AI生成的配置映射）
     
     Returns:
         提取的工单信息字典
@@ -131,18 +135,31 @@ def extract_ticket_info(user_input: str, project_path: Optional[str] = None) -> 
     if ticket_id:
         ticket_info['ticket_id'] = ticket_id
     
-    # 提取服务信息
-    services = extract_service_info(user_input)
+    # 获取AI生成的配置映射（如果提供了项目路径）
+    signoz_config = None
+    if project_path:
+        try:
+            from utils import get_analyzer_dir, load_json_file
+            from pathlib import Path
+            analyzer_dir = get_analyzer_dir(project_path)
+            signoz_config_file = analyzer_dir / 'signoz_config.json'
+            if signoz_config_file.exists():
+                signoz_config = load_json_file(signoz_config_file)
+        except Exception:
+            pass
+    
+    # 提取服务信息（优先使用AI生成的映射）
+    services = extract_service_info(user_input, signoz_config)
     if services:
         ticket_info['services'] = services
     
-    # 提取用户信息
-    user_info = extract_user_info(user_input)
+    # 提取用户信息（优先使用AI生成的映射）
+    user_info = extract_user_info(user_input, signoz_config)
     if user_info:
         ticket_info['user_info'] = user_info
     
-    # 提取设备信息
-    device_info = extract_device_info(user_input)
+    # 提取设备信息（优先使用AI生成的映射）
+    device_info = extract_device_info(user_input, signoz_config)
     if device_info:
         ticket_info['device_info'] = device_info
     
@@ -186,41 +203,93 @@ def extract_ticket_id(text: str) -> Optional[str]:
     return None
 
 
-def extract_service_info(text: str) -> list:
-    """提取服务信息"""
+def extract_service_info(text: str, signoz_config: Optional[Dict[str, Any]] = None) -> list:
+    """
+    提取服务信息
+    
+    ⚠️ 重要：优先使用AI生成的service_name_mapping，而不是简单的正则匹配
+    """
     services = []
     
-    patterns = [
-        r'服务[:：]\s*([^\s,，]+)',
-        r'[Ss]ervice[:：]\s*([^\s,，]+)',
-        r'服务名[:：]\s*([^\s,，]+)'
-    ]
+    # 1. 优先使用AI生成的service_name_mapping（最准确）
+    service_name_mapping = signoz_config.get('service_name_mapping', {}) if signoz_config else {}
+    if service_name_mapping:
+        for user_pattern, actual_service_name in service_name_mapping.items():
+            if user_pattern in text:
+                if actual_service_name not in services:
+                    services.append(actual_service_name)
     
-    for pattern in patterns:
-        matches = re.findall(pattern, text)
-        services.extend(matches)
+    # 2. 如果AI映射中没有，尝试从service_names中查找
+    if not services and signoz_config:
+        service_names = signoz_config.get('service_names', {})
+        if service_names:
+            # 尝试匹配服务名称
+            patterns = [
+                r'服务[:：]\s*([^\s,，]+)',
+                r'[Ss]ervice[:：]\s*([^\s,，]+)',
+                r'服务名[:：]\s*([^\s,，]+)'
+            ]
+            for pattern in patterns:
+                matches = re.findall(pattern, text)
+                for match in matches:
+                    # 尝试在service_names中查找匹配的服务
+                    for service_name in service_names.keys():
+                        if match in service_name or service_name in match:
+                            if service_name not in services:
+                                services.append(service_name)
+    
+    # 3. 如果还是没有，使用简单的正则匹配（辅助，可能不准确）
+    if not services:
+        patterns = [
+            r'服务[:：]\s*([^\s,，]+)',
+            r'[Ss]ervice[:：]\s*([^\s,，]+)',
+            r'服务名[:：]\s*([^\s,，]+)'
+        ]
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            services.extend(matches)
     
     # 去重
     return list(set(services))
 
 
-def extract_user_info(text: str) -> Dict[str, Any]:
-    """提取用户信息"""
+def extract_user_info(text: str, signoz_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    提取用户信息
+    
+    ⚠️ 重要：优先使用AI生成的field_extraction_rules，而不是简单的正则匹配
+    """
     user_info = {}
     
-    # 用户ID（注意：实际字段名是user.id，不是user_id）
-    user_id_patterns = [
-        r'用户[ID|id|Id|iD][:：]\s*([^\s,，]+)',
-        r'[Uu]ser[ID|id|Id|iD][:：]\s*([^\s,，]+)',
-        r'用户号[:：]\s*([^\s,，]+)'
-    ]
-    for pattern in user_id_patterns:
-        match = re.search(pattern, text)
-        if match:
-            # 保存为user_id用于后续处理，但实际查询时使用user.id
-            user_info['user_id'] = match.group(1)
-            user_info['user.id'] = match.group(1)  # 实际字段名
-            break
+    # 1. 优先使用AI生成的field_extraction_rules（最准确）
+    field_extraction_rules = signoz_config.get('field_extraction_rules', {}) if signoz_config else {}
+    user_id_rules = field_extraction_rules.get('user_id', {})
+    
+    if user_id_rules:
+        for user_pattern, actual_field_name in user_id_rules.items():
+            # 尝试匹配用户输入中的模式
+            pattern = rf'{re.escape(user_pattern)}[:：]?\s*([^\s,，]+)'
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                user_id_value = match.group(1)
+                user_info['user_id'] = user_id_value
+                user_info[actual_field_name] = user_id_value  # 使用实际字段名
+                break
+    
+    # 2. 如果AI映射中没有，使用简单的正则匹配（辅助，可能不准确）
+    if 'user.id' not in user_info and 'user_id' not in user_info:
+        user_id_patterns = [
+            r'用户[ID|id|Id|iD][:：]\s*([^\s,，]+)',
+            r'[Uu]ser[ID|id|Id|iD][:：]\s*([^\s,，]+)',
+            r'用户号[:：]\s*([^\s,，]+)'
+        ]
+        for pattern in user_id_patterns:
+            match = re.search(pattern, text)
+            if match:
+                # 保存为user_id用于后续处理，但实际查询时使用user.id
+                user_info['user_id'] = match.group(1)
+                user_info['user.id'] = match.group(1)  # 实际字段名（默认）
+                break
     
     # 用户名
     username_patterns = [
@@ -242,25 +311,46 @@ def extract_user_info(text: str) -> Dict[str, Any]:
     return user_info
 
 
-def extract_device_info(text: str) -> Dict[str, Any]:
-    """提取设备信息"""
+def extract_device_info(text: str, signoz_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    提取设备信息
+    
+    ⚠️ 重要：优先使用AI生成的field_extraction_rules，而不是简单的正则匹配
+    """
     device_info = {}
     
-    patterns = [
-        r'设备[ID|id|Id|iD][:：]\s*([^\s,，]+)',
-        r'[Dd]evice[ID|id|Id|iD][:：]\s*([^\s,，]+)',
-        r'[Cc]lient[ID|id|Id|iD][:：]\s*([^\s,，]+)'
-    ]
+    # 1. 优先使用AI生成的field_extraction_rules（最准确）
+    field_extraction_rules = signoz_config.get('field_extraction_rules', {}) if signoz_config else {}
+    client_id_rules = field_extraction_rules.get('client_id', {})
     
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            # 保存为device_id和client_id用于后续处理，但实际查询时使用user.client_id
-            device_id = match.group(1)
-            device_info['device_id'] = device_id
-            device_info['client_id'] = device_id
-            device_info['user.client_id'] = device_id  # 实际字段名
-            break
+    if client_id_rules:
+        for user_pattern, actual_field_name in client_id_rules.items():
+            # 尝试匹配用户输入中的模式
+            pattern = rf'{re.escape(user_pattern)}[:：]?\s*([^\s,，]+)'
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                client_id_value = match.group(1)
+                device_info['device_id'] = client_id_value
+                device_info['client_id'] = client_id_value
+                device_info[actual_field_name] = client_id_value  # 使用实际字段名
+                break
+    
+    # 2. 如果AI映射中没有，使用简单的正则匹配（辅助，可能不准确）
+    if 'user.client_id' not in device_info and 'client_id' not in device_info:
+        patterns = [
+            r'设备[ID|id|Id|iD][:：]\s*([^\s,，]+)',
+            r'[Dd]evice[ID|id|Id|iD][:：]\s*([^\s,，]+)',
+            r'[Cc]lient[ID|id|Id|iD][:：]\s*([^\s,，]+)'
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                # 保存为device_id和client_id用于后续处理，但实际查询时使用user.client_id
+                device_id = match.group(1)
+                device_info['device_id'] = device_id
+                device_info['client_id'] = device_id
+                device_info['user.client_id'] = device_id  # 实际字段名（默认）
+                break
     
     return device_info
 
@@ -345,20 +435,23 @@ def extract_api_info(text: str, project_path: Optional[str] = None) -> Dict[str,
     """
     提取接口信息
     
-    支持从文本中提取pathname，并通过项目配置组合完整URL
+    ⚠️ 重要：此函数只是辅助提取，真正的pathname识别必须由AI在Phase 0阶段完成
+    AI会通读项目代码，追踪API调用，找到baseUrl的来源，然后组合完整pathname
+    如果signoz_config中存在api_pathname_mapping，优先使用AI生成的准确映射
     
     Args:
         text: 输入文本
-        project_path: 项目路径（用于获取baseurl配置）
+        project_path: 项目路径（用于获取baseurl配置和AI生成的pathname映射）
     
     Returns:
         接口信息字典，包含api_path, full_url, pathname等
     """
     api_info = {}
     
-    # 获取baseurl（如果提供了项目路径）
+    # 获取baseurl和AI生成的pathname映射（如果提供了项目路径）
     base_url = None
     api_baseurls = {}
+    api_pathname_mapping = {}  # AI生成的pathname映射（必须准确）
     if project_path:
         try:
             from utils import get_analyzer_dir, load_json_file
@@ -370,6 +463,8 @@ def extract_api_info(text: str, project_path: Optional[str] = None) -> Dict[str,
                 if signoz_config:
                     base_url = signoz_config.get('base_url')
                     api_baseurls = signoz_config.get('api_baseurls', {})
+                    # ⚠️ 优先使用AI生成的pathname映射（必须准确）
+                    api_pathname_mapping = signoz_config.get('api_pathname_mapping', {})
         except Exception:
             pass
     
@@ -429,29 +524,34 @@ def extract_api_info(text: str, project_path: Optional[str] = None) -> Dict[str,
     if api_path:
         api_info['api_path'] = api_path
         
-        # ⚠️ 重要：pathname应该包含baseurl的路径部分
-        # 例如：如果baseurl是 https://cs8.intsig.net/sync，api_path是 /revert_dir_list
-        # 那么pathname应该是 /sync/revert_dir_list（包含baseurl的路径部分/sync）
-        pathname = api_path
+        # ⚠️ 重要：pathname识别必须由AI在Phase 0阶段完成
+        # 优先使用AI生成的api_pathname_mapping（必须准确）
+        pathname = None
         
-        # 如果base_url存在，提取其路径部分并组合
-        if base_url:
-            from urllib.parse import urlparse
-            try:
-                parsed = urlparse(base_url)
-                base_path = parsed.path
-                if base_path and base_path != '/':
-                    # 组合baseurl的路径部分和api_path
-                    pathname = base_path.rstrip('/') + (api_path if api_path.startswith('/') else '/' + api_path)
-            except Exception:
-                pass
+        # 1. 优先使用AI生成的pathname映射（最准确）
+        if api_pathname_mapping and api_path in api_pathname_mapping:
+            pathname = api_pathname_mapping[api_path]
+            api_info['pathname_source'] = 'ai_mapping'
         
-        # 如果api_baseurls存在，尝试从其中查找匹配的baseurl
-        # 这需要AI通读代码确定，这里只做辅助
-        if api_baseurls and not pathname.startswith('/'):
-            # 如果pathname还没有包含baseurl路径，尝试从api_baseurls中查找
-            # 注意：这里需要AI根据代码上下文确定使用哪个baseurl
-            pass
+        # 2. 如果AI映射中没有，尝试从base_url组合（辅助，可能不准确）
+        if not pathname:
+            if base_url:
+                from urllib.parse import urlparse
+                try:
+                    parsed = urlparse(base_url)
+                    base_path = parsed.path
+                    if base_path and base_path != '/':
+                        # 组合baseurl的路径部分和api_path
+                        pathname = base_path.rstrip('/') + (api_path if api_path.startswith('/') else '/' + api_path)
+                        api_info['pathname_source'] = 'base_url_combined'
+                except Exception:
+                    pass
+        
+        # 3. 如果还是没有，使用原始api_path（最不准确，仅作为后备）
+        if not pathname:
+            pathname = api_path
+            api_info['pathname_source'] = 'fallback'
+            api_info['pathname_warning'] = 'pathname未在AI生成的映射中找到，使用原始路径，可能不准确'
         
         api_info['pathname'] = pathname
         
