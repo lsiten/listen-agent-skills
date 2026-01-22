@@ -522,12 +522,15 @@ def generate_mcp_instructions(
 1. 必须首先执行 list_services 获取服务列表，确认服务名称
 2. 根据服务名称和查询条件，使用 signoz_execute_builder_query 执行具体查询
 3. ⚠️ 重要：SigNoz Query Builder v5使用filter（单数）和expression（SQL-like字符串），而不是filters（复数）和items数组格式
-4. ⚠️ 重要：查询时不要添加fieldContext字段，SigNoz会自动识别字段上下文
+4. ⚠️ 重要：对于有歧义的字段（如user.id），需要明确指定fieldContext和fieldDataType
+   - 如果遇到"key is ambiguous"警告，在filter的key中明确指定fieldContext和fieldDataType
+   - 例如：{"key": {"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64"}, ...}
 5. ⚠️ 重要：确保formatTableResultForUI设置为true，以便正确显示结果
 6. ⚠️ 重要：如果查询结果为空，尝试：
    - 检查时间范围是否正确
    - 检查服务名称是否准确（使用list_services获取的实际服务名）
    - 检查字段名称是否正确（如user.id是int64类型，确保值类型匹配）
+   - 如果遇到"key is ambiguous"警告，明确指定fieldContext和fieldDataType
    - 尝试简化查询条件，逐步添加过滤条件
    - 检查filter expression格式是否正确（应该是SQL-like字符串，如 "severity_text IN ('ERROR', 'FATAL') AND service.name in ['service-name']"）
 7. ⚠️ 迭代查询：如果查询结果不为空，可以从结果中提取特征信息（设备ID、用户ID、IP、地理位置、浏览器版本、应用版本等），然后基于这些特征信息进行更精确的查询
@@ -711,8 +714,8 @@ def build_error_logs_query(
                             build_field_spec('severity_text', 'logs'),
                             build_field_spec('severity_number', 'logs'),
                             build_field_spec('timestamp', 'logs'),
-                            build_field_spec('user.id', 'logs'),
-                            build_field_spec('user.client_id', 'logs'),
+                            build_field_spec('user.id', 'logs', include_field_context=True),  # 明确指定fieldContext消除歧义
+                            build_field_spec('user.client_id', 'logs', include_field_context=True),  # 明确指定fieldContext消除歧义
                             build_field_spec('source.address', 'logs'),
                             build_field_spec('geo.city_name', 'logs'),
                             build_field_spec('browser.name', 'logs'),

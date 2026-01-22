@@ -263,7 +263,7 @@ def build_prevalence_query(
                             build_field_spec('geo.city_name', 'logs'),
                             build_field_spec('browser.name', 'logs'),
                             build_field_spec('browser.version', 'logs'),
-                            build_field_spec('user.id', 'logs'),
+                            build_field_spec('user.id', 'logs', include_field_context=True),  # 明确指定fieldContext消除歧义
                             build_field_spec('user.client_id', 'logs'),
                             build_field_spec('source.address', 'logs')
                         ],

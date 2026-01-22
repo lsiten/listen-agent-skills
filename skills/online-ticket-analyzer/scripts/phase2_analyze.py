@@ -8,7 +8,7 @@
 import sys
 import re
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 from utils import (
     get_ticket_dir,
@@ -22,6 +22,192 @@ from prevalence_analyzer import (
     analyze_prevalence,
     load_and_analyze_prevalence_results
 )
+
+
+def check_mcp_results_empty(mcp_results: Dict[str, Any]) -> Tuple[bool, list]:
+    """
+    检查MCP查询结果是否为空
+    
+    Args:
+        mcp_results: MCP查询结果
+    
+    Returns:
+        (是否为空, 警告信息列表)
+    """
+    if not mcp_results:
+        return True, ["MCP查询结果不存在"]
+    
+    is_empty = True
+    warnings = []
+    
+    # 检查queries_executed（Query Builder v5格式）
+    queries_executed = mcp_results.get('queries_executed', [])
+    if queries_executed:
+        for query_result in queries_executed:
+            result_data = query_result.get('result', {})
+            rows = result_data.get('rows', [])
+            data = result_data.get('data')
+            
+            # 检查是否有数据
+            if rows and isinstance(rows, list) and len(rows) > 0:
+                is_empty = False
+            elif data and isinstance(data, list) and len(data) > 0:
+                is_empty = False
+            
+            # 检查警告信息
+            if 'warnings' in result_data:
+                warnings.extend(result_data['warnings'])
+            if 'note' in query_result:
+                warnings.append(query_result['note'])
+    
+    # 检查queries（旧格式）
+    queries = mcp_results.get('queries', [])
+    if queries:
+        for query_result in queries:
+            data = query_result.get('data')
+            if data:
+                if isinstance(data, list) and len(data) > 0:
+                    is_empty = False
+                elif isinstance(data, dict) and data.get('result'):
+                    result_list = data['result']
+                    if isinstance(result_list, list) and len(result_list) > 0:
+                        is_empty = False
+    
+    return is_empty, warnings
+
+
+def generate_preliminary_analysis(
+    ticket_info: Dict[str, Any],
+    ticket_context: Dict[str, Any],
+    mcp_results: Dict[str, Any],
+    warnings: list
+) -> str:
+    """
+    生成初步判断（当查询结果为空时）
+    
+    Args:
+        ticket_info: 工单信息
+        ticket_context: 工单上下文
+        mcp_results: MCP查询结果
+        warnings: 警告信息列表
+    
+    Returns:
+        初步判断文本
+    """
+    analysis_parts = []
+    
+    analysis_parts.append("# ⚠️ 初步判断")
+    analysis_parts.append("")
+    analysis_parts.append("**查询结果为空，无法生成完整解决方案。**")
+    analysis_parts.append("")
+    
+    # 分析可能的原因
+    analysis_parts.append("## 可能的原因分析")
+    analysis_parts.append("")
+    
+    time_range = ticket_context.get('time_range', {})
+    time_info = ticket_info.get('time_info', {})
+    
+    # 检查时间范围
+    if time_range.get('start') and time_range.get('end'):
+        from datetime import datetime
+        start_dt = datetime.fromtimestamp(time_range['start'] / 1000)
+        end_dt = datetime.fromtimestamp(time_range['end'] / 1000)
+        duration_hours = (end_dt - start_dt).total_seconds() / 3600
+        
+        if duration_hours < 1:
+            analysis_parts.append("- ⚠️ **时间范围过窄**：查询时间范围小于1小时，可能遗漏了相关日志")
+        elif duration_hours > 24:
+            analysis_parts.append("- ⚠️ **时间范围过宽**：查询时间范围超过24小时，可能需要更精确的时间")
+        else:
+            analysis_parts.append(f"- ✅ 时间范围：{time_range.get('start_display', '')} - {time_range.get('end_display', '')}（{duration_hours:.1f}小时）")
+    
+    # 检查服务名称
+    services = ticket_info.get('services', [])
+    if not services:
+        analysis_parts.append("- ⚠️ **缺少服务名称**：未指定服务名称，可能查询了所有服务但未找到匹配的日志")
+    else:
+        analysis_parts.append(f"- ✅ 服务名称：{', '.join(services)}")
+    
+    # 检查用户信息
+    user_info = ticket_info.get('user_info', {})
+    if not user_info.get('user.id') and not user_info.get('user_id'):
+        analysis_parts.append("- ⚠️ **缺少用户ID**：未提供用户ID，可能无法精确定位用户相关日志")
+    else:
+        user_id = user_info.get('user.id') or user_info.get('user_id')
+        analysis_parts.append(f"- ✅ 用户ID：{user_id}")
+    
+    # 检查设备信息
+    device_info = ticket_info.get('device_info', {})
+    if not device_info.get('user.client_id') and not device_info.get('client_id') and not device_info.get('device_id'):
+        analysis_parts.append("- ⚠️ **缺少设备ID**：未提供设备ID，可能无法精确定位设备相关日志")
+    else:
+        device_id = device_info.get('user.client_id') or device_info.get('client_id') or device_info.get('device_id')
+        analysis_parts.append(f"- ✅ 设备ID：{device_id}")
+    
+    # 检查接口信息
+    api_info = ticket_info.get('api_info', {})
+    if not api_info.get('pathname') and not api_info.get('api_path'):
+        analysis_parts.append("- ⚠️ **缺少接口路径**：未提供接口路径，可能无法精确定位接口相关日志")
+    else:
+        api_path = api_info.get('pathname') or api_info.get('api_path')
+        analysis_parts.append(f"- ✅ 接口路径：{api_path}")
+    
+    # 显示警告信息
+    if warnings:
+        analysis_parts.append("")
+        analysis_parts.append("## 查询警告信息")
+        analysis_parts.append("")
+        for warning in warnings:
+            analysis_parts.append(f"- ⚠️ {warning}")
+    
+    # 提供建议
+    analysis_parts.append("")
+    analysis_parts.append("## 💡 建议")
+    analysis_parts.append("")
+    analysis_parts.append("为了获得更准确的查询结果，建议提供以下信息：")
+    analysis_parts.append("")
+    
+    suggestions = []
+    if not services:
+        suggestions.append("1. **服务名称**：明确指定发生问题的服务名称")
+    if not user_info.get('user.id') and not user_info.get('user_id'):
+        suggestions.append("2. **用户ID**：提供用户ID，可以精确定位用户相关日志")
+    if not device_info.get('user.client_id') and not device_info.get('client_id') and not device_info.get('device_id'):
+        suggestions.append("3. **设备ID**：提供设备ID或客户端ID，可以精确定位设备相关日志")
+    if not api_info.get('pathname') and not api_info.get('api_path'):
+        suggestions.append("4. **接口路径**：提供具体的接口路径，可以精确定位接口相关日志")
+    if time_range.get('start') and time_range.get('end'):
+        from datetime import datetime
+        start_dt = datetime.fromtimestamp(time_range['start'] / 1000)
+        end_dt = datetime.fromtimestamp(time_range['end'] / 1000)
+        duration_hours = (end_dt - start_dt).total_seconds() / 3600
+        if duration_hours < 1:
+            suggestions.append("5. **时间范围**：扩大查询时间范围（建议至少2小时）")
+        elif duration_hours > 24:
+            suggestions.append("5. **时间范围**：缩小查询时间范围，提供更精确的问题发生时间")
+    
+    if not suggestions:
+        suggestions.append("1. 检查时间范围是否正确")
+        suggestions.append("2. 确认服务名称是否准确（使用list_services获取实际服务名）")
+        suggestions.append("3. 尝试简化查询条件，逐步添加过滤条件")
+        if warnings:
+            suggestions.append("4. 检查查询警告信息，可能需要明确指定字段的fieldContext和fieldDataType")
+    
+    for suggestion in suggestions:
+        analysis_parts.append(suggestion)
+    
+    analysis_parts.append("")
+    analysis_parts.append("## 下一步操作")
+    analysis_parts.append("")
+    analysis_parts.append("请根据上述建议，提供更精确的信息后，重新运行分析。")
+    analysis_parts.append("")
+    analysis_parts.append("或者，如果您确认信息无误，可以：")
+    analysis_parts.append("1. 检查SigNoz平台，确认该时间段内是否有相关日志")
+    analysis_parts.append("2. 确认服务名称、时间范围等信息是否正确")
+    analysis_parts.append("3. 如果确实没有日志，可能需要扩大时间范围或检查其他服务")
+    
+    return "\n".join(analysis_parts)
 
 
 def process_log_data(mcp_results: Dict[str, Any]) -> Dict[str, Any]:
@@ -42,13 +228,31 @@ def process_log_data(mcp_results: Dict[str, Any]) -> Dict[str, Any]:
         'services': set(),
         'key_errors': [],
         'time_pattern': {},
-        'summary': ''
+        'summary': '',
+        'has_data': False
     }
     
     # 处理查询结果
+    if 'queries_executed' in mcp_results:
+        for query_result in mcp_results.get('queries_executed', []):
+            result_data = query_result.get('result', {})
+            rows = result_data.get('rows', [])
+            if rows and isinstance(rows, list) and len(rows) > 0:
+                log_analysis['has_data'] = True
+                for row in rows:
+                    process_log_entry(row, log_analysis)
+    
     if 'queries' in mcp_results:
         for query_result in mcp_results.get('queries', []):
             process_query_result(query_result, log_analysis)
+            if query_result.get('data'):
+                data = query_result['data']
+                if isinstance(data, list) and len(data) > 0:
+                    log_analysis['has_data'] = True
+                elif isinstance(data, dict) and data.get('result'):
+                    result_list = data['result']
+                    if isinstance(result_list, list) and len(result_list) > 0:
+                        log_analysis['has_data'] = True
     
     # 转换set为list
     log_analysis['services'] = list(log_analysis['services'])
@@ -61,6 +265,16 @@ def process_log_data(mcp_results: Dict[str, Any]) -> Dict[str, Any]:
 
 def process_query_result(query_result: Dict[str, Any], log_analysis: Dict[str, Any]) -> None:
     """处理单个查询结果"""
+    # 处理queries_executed格式（Query Builder v5）
+    if 'result' in query_result:
+        result_data = query_result.get('result', {})
+        rows = result_data.get('rows', [])
+        if rows and isinstance(rows, list):
+            for row in rows:
+                process_log_entry(row, log_analysis)
+            return
+    
+    # 处理旧格式（queries）
     if 'data' not in query_result:
         return
     
@@ -655,6 +869,79 @@ def init_phase_2(
     
     print("  ✅ 已加载MCP查询结果")
     
+    # 检查查询结果是否为空
+    is_empty, warnings = check_mcp_results_empty(mcp_results)
+    
+    if is_empty:
+        print("\n⚠️  查询结果为空，生成初步判断...")
+        print("  ⚠️  未找到相关日志数据")
+        if warnings:
+            print("  ⚠️  查询警告：")
+            for warning in warnings:
+                print(f"     - {warning}")
+        
+        # 生成初步判断
+        preliminary_analysis = generate_preliminary_analysis(
+            ticket_info,
+            ticket_context,
+            mcp_results,
+            warnings
+        )
+        
+        # 生成初步判断文档
+        print("\n📝 生成初步判断文档...")
+        ticket_dir = get_ticket_dir(project_path, ticket_id)
+        preliminary_file = ticket_dir / 'preliminary_analysis.md'
+        
+        document = f"""# 工单初步判断
+
+## 工单信息
+
+- **工单ID**: {ticket_id}
+- **问题描述**: {ticket_info.get('description', '')[:200]}...
+- **查询时间范围**: {ticket_context.get('time_range', {}).get('start_display', '')} - {ticket_context.get('time_range', {}).get('end_display', '')}
+- **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+---
+
+{preliminary_analysis}
+
+---
+
+## ⚠️ 重要提示
+
+**由于查询结果为空，无法生成完整解决方案。**
+
+请根据上述建议提供更精确的信息，然后：
+1. 更新工单信息（添加用户ID、设备ID、接口路径等）
+2. 调整查询时间范围（如果需要）
+3. 重新运行分析
+
+或者，如果您确认信息无误，可以：
+- 检查SigNoz平台，确认该时间段内是否有相关日志
+- 确认服务名称、时间范围等信息是否正确
+- 如果确实没有日志，可能需要扩大时间范围或检查其他服务
+"""
+        
+        if save_markdown_file(preliminary_file, document):
+            print(f"  ✅ 初步判断文档已保存: {preliminary_file}")
+        else:
+            print("  ⚠️  初步判断文档保存失败")
+        
+        print("\n" + "="*60)
+        print("⚠️  查询结果为空，已生成初步判断")
+        print("="*60)
+        print("\n请查看初步判断文档，提供更精确的信息后重新运行分析。")
+        print(f"文档位置: {preliminary_file}")
+        
+        return {
+            'log_analysis': {'has_data': False, 'summary': '查询结果为空'},
+            'is_empty': True,
+            'preliminary_analysis': preliminary_analysis,
+            'preliminary_file': str(preliminary_file),
+            'warnings': warnings
+        }
+    
     # 处理日志数据
     print("\n📊 处理日志数据...")
     log_analysis = process_log_data(mcp_results)
@@ -704,6 +991,11 @@ def init_phase_2(
                 print("  ✅ 未检测到普遍性问题，似乎是孤立事件")
         else:
             print("  ⏳ 等待AI执行普遍性查询（prevalence_instructions.json）")
+    
+    # 检查是否有数据
+    if not log_analysis.get('has_data', True):
+        print("\n⚠️  日志分析未发现数据，但查询结果不为空")
+        print("  可能是查询条件过于严格，建议放宽查询条件")
     
     # 生成综合解决方案
     print("\n💡 生成综合解决方案...")

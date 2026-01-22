@@ -630,29 +630,38 @@ def parse_field_path(field_path: str) -> dict:
     }
 
 
-def build_field_spec(field_path: str, signal: str = 'logs') -> dict:
+def build_field_spec(field_path: str, signal: str = 'logs', include_field_context: bool = False) -> dict:
     """
     构建字段规范（用于Query Builder）
     
-    ⚠️ 注意：SigNoz查询时，attributes、resource这些是不需要传入的
-    只需要传入字段名称即可，SigNoz会自动识别字段的上下文
+    ⚠️ 注意：对于有歧义的字段（如user.id），需要明确指定fieldContext和fieldDataType
+    以避免"key is ambiguous"错误
     
     Args:
         field_path: 字段路径
         signal: 信号类型（logs, traces, metrics）
+        include_field_context: 是否包含fieldContext（对于有歧义的字段，建议设置为True）
     
     Returns:
-        字段规范字典（不包含fieldContext）
+        字段规范字典
     """
     field_def = parse_field_path(field_path)
     
-    # 只返回字段名称和数据类型，不包含fieldContext
-    return {
+    # 对于有歧义的字段，明确指定fieldContext和fieldDataType
+    ambiguous_fields = ['user.id', 'user.client_id']  # 已知有歧义的字段
+    
+    spec = {
         'name': field_def['name'],
         'fieldDataType': field_def.get('fieldDataType', 'string'),
         'signal': signal
-        # 注意：不包含fieldContext，SigNoz会自动识别
     }
+    
+    # 如果字段有歧义或明确要求包含fieldContext，则添加
+    if include_field_context or field_path in ambiguous_fields:
+        if 'fieldContext' in field_def:
+            spec['fieldContext'] = field_def['fieldContext']
+    
+    return spec
 
 
 def is_error_severity(severity_text: Optional[str] = None, severity_number: Optional[int] = None) -> bool:
