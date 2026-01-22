@@ -660,6 +660,14 @@ def build_field_spec(field_path: str, signal: str = 'logs', include_field_contex
     if include_field_context or field_path in ambiguous_fields:
         if 'fieldContext' in field_def:
             spec['fieldContext'] = field_def['fieldContext']
+        # ⚠️ 重要：对于user.id字段，明确指定为int64类型（根据实际数据结构）
+        if field_path == 'user.id':
+            spec['fieldDataType'] = 'int64'
+            spec['fieldContext'] = 'attributes'
+        # ⚠️ 重要：对于user.client_id字段，明确指定为string类型
+        elif field_path == 'user.client_id':
+            spec['fieldDataType'] = 'string'
+            spec['fieldContext'] = 'attributes'
     
     return spec
 

@@ -523,14 +523,17 @@ def generate_mcp_instructions(
 2. 根据服务名称和查询条件，使用 signoz_execute_builder_query 执行具体查询
 3. ⚠️ 重要：SigNoz Query Builder v5使用filter（单数）和expression（SQL-like字符串），而不是filters（复数）和items数组格式
 4. ⚠️ 重要：对于有歧义的字段（如user.id），需要明确指定fieldContext和fieldDataType
-   - 如果遇到"key is ambiguous"警告，在filter的key中明确指定fieldContext和fieldDataType
-   - 例如：{"key": {"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64"}, ...}
+   - user.id字段在attributes上下文中有3种类型：string、bool、number（int64）
+   - 根据实际数据结构，user.id是int64（number）类型
+   - 在selectFields中已明确指定fieldContext和fieldDataType
+   - 如果仍然遇到"key is ambiguous"警告，需要在查询的spec中添加字段定义，或者在filter的key中明确指定
+   - 警告示例："key `user.id` is ambiguous, found 3 different combinations of field context and data type: [name=user.id,context=attribute,type=string name=user.id,context=attribute,type=bool name=user.id,context=attribute,type=number]"
 5. ⚠️ 重要：确保formatTableResultForUI设置为true，以便正确显示结果
 6. ⚠️ 重要：如果查询结果为空，尝试：
    - 检查时间范围是否正确
    - 检查服务名称是否准确（使用list_services获取的实际服务名）
    - 检查字段名称是否正确（如user.id是int64类型，确保值类型匹配）
-   - 如果遇到"key is ambiguous"警告，明确指定fieldContext和fieldDataType
+   - 如果遇到"key is ambiguous"警告，确保在selectFields中明确指定fieldContext和fieldDataType
    - 尝试简化查询条件，逐步添加过滤条件
    - 检查filter expression格式是否正确（应该是SQL-like字符串，如 "severity_text IN ('ERROR', 'FATAL') AND service.name in ['service-name']"）
 7. ⚠️ 迭代查询：如果查询结果不为空，可以从结果中提取特征信息（设备ID、用户ID、IP、地理位置、浏览器版本、应用版本等），然后基于这些特征信息进行更精确的查询
@@ -620,8 +623,15 @@ def build_error_logs_query(
         except (ValueError, TypeError):
             user_id_value = user_id
         
+        # ⚠️ 重要：user.id字段有歧义（attributes上下文中有string、bool、number三种类型）
+        # 根据实际数据结构，user.id是int64（number）类型
+        # 在selectFields中已明确指定，filter expression中使用时也需要确保类型匹配
         filter_items.append({
-            'key': {'name': 'user.id'},
+            'key': {
+                'name': 'user.id',
+                'fieldContext': 'attributes',  # 明确指定context
+                'fieldDataType': 'int64'  # 明确指定数据类型为int64（number）
+            },
             'value': [user_id_value],
             'op': 'in'
         })
@@ -630,8 +640,13 @@ def build_error_logs_query(
     device_info = ticket_info.get('device_info', {})
     client_id = device_info.get('user.client_id') or device_info.get('client_id') or device_info.get('device_id')
     if client_id:
+        # ⚠️ 重要：user.client_id字段可能有歧义，明确指定为string类型
         filter_items.append({
-            'key': {'name': 'user.client_id'},
+            'key': {
+                'name': 'user.client_id',
+                'fieldContext': 'attributes',  # 明确指定context
+                'fieldDataType': 'string'  # 明确指定数据类型为string
+            },
             'value': [str(client_id)],
             'op': 'in'
         })
@@ -714,8 +729,10 @@ def build_error_logs_query(
                             build_field_spec('severity_text', 'logs'),
                             build_field_spec('severity_number', 'logs'),
                             build_field_spec('timestamp', 'logs'),
-                            build_field_spec('user.id', 'logs', include_field_context=True),  # 明确指定fieldContext消除歧义
-                            build_field_spec('user.client_id', 'logs', include_field_context=True),  # 明确指定fieldContext消除歧义
+                            # ⚠️ 重要：user.id字段有歧义（attributes上下文中有string、bool、number三种类型），明确指定为int64类型
+                            build_field_spec('user.id', 'logs', include_field_context=True),
+                            # ⚠️ 重要：user.client_id字段可能有歧义，明确指定为string类型
+                            build_field_spec('user.client_id', 'logs', include_field_context=True),
                             build_field_spec('source.address', 'logs'),
                             build_field_spec('geo.city_name', 'logs'),
                             build_field_spec('browser.name', 'logs'),
@@ -788,7 +805,11 @@ def build_service_logs_query(
     # 先添加优先级字段
     for field in priority_fields:
         if field not in added_fields:
-            field_spec = build_field_spec(field, 'logs')
+            # ⚠️ 重要：对于有歧义的字段（user.id, user.client_id），明确指定fieldContext
+            if field in ['user.id', 'user.client_id']:
+                field_spec = build_field_spec(field, 'logs', include_field_context=True)
+            else:
+                field_spec = build_field_spec(field, 'logs')
             select_fields.append(field_spec)
             added_fields.add(field)
     
@@ -818,8 +839,15 @@ def build_service_logs_query(
         except (ValueError, TypeError):
             user_id_value = user_id
         
+        # ⚠️ 重要：user.id字段有歧义（attributes上下文中有string、bool、number三种类型）
+        # 根据实际数据结构，user.id是int64（number）类型
+        # 在selectFields中已明确指定，filter expression中使用时也需要确保类型匹配
         filter_items.append({
-            'key': {'name': 'user.id'},
+            'key': {
+                'name': 'user.id',
+                'fieldContext': 'attributes',  # 明确指定context
+                'fieldDataType': 'int64'  # 明确指定数据类型为int64（number）
+            },
             'value': [user_id_value],
             'op': 'in'
         })
@@ -828,8 +856,13 @@ def build_service_logs_query(
     device_info = ticket_info.get('device_info', {})
     client_id = device_info.get('user.client_id') or device_info.get('client_id') or device_info.get('device_id')
     if client_id:
+        # ⚠️ 重要：user.client_id字段可能有歧义，明确指定为string类型
         filter_items.append({
-            'key': {'name': 'user.client_id'},
+            'key': {
+                'name': 'user.client_id',
+                'fieldContext': 'attributes',  # 明确指定context
+                'fieldDataType': 'string'  # 明确指定数据类型为string
+            },
             'value': [str(client_id)],
             'op': 'in'
         })
@@ -864,6 +897,8 @@ def build_service_logs_query(
         })
     
     # 将过滤条件转换为SQL-like表达式
+    # ⚠️ 注意：build_filter_expression只使用field_name，fieldContext和fieldDataType信息保留在filter_items中
+    # 这些信息会在查询的selectFields中使用，确保字段歧义被正确解析
     filter_expression = build_filter_expression(filter_items)
     
     # 构建查询

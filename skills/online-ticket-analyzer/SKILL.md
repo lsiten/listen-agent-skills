@@ -1093,7 +1093,20 @@ MCP查询返回的结果通常具有以下结构：
 
 ### 注意事项
 
-1. **⚠️ 重要：不要添加fieldContext字段**：查询时不要添加`fieldContext`字段，SigNoz会自动识别字段上下文（resource、attributes等）
+1. **⚠️ 重要：字段歧义处理**：
+   - 对于有歧义的字段（如`user.id`），**必须**在`selectFields`中明确指定`fieldContext`和`fieldDataType`
+   - `user.id`字段在attributes上下文中有3种类型：string、bool、number（int64）
+   - 根据实际数据结构，`user.id`是int64（number）类型
+   - 警告示例："key `user.id` is ambiguous, found 3 different combinations of field context and data type: [name=user.id,context=attribute,type=string name=user.id,context=attribute,type=bool name=user.id,context=attribute,type=number]"
+   - **解决方案**：在selectFields中明确指定：
+     ```json
+     {
+       "name": "user.id",
+       "fieldContext": "attributes",
+       "fieldDataType": "int64",
+       "signal": "logs"
+     }
+     ```
 
 2. **字段数据类型**：确保`fieldDataType`与实际数据类型匹配（string, int64等），例如`user.id`是`int64`类型，值也应该是数字
 
