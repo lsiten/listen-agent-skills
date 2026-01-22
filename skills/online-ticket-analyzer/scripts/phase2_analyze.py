@@ -483,6 +483,45 @@ def generate_solution(
             solution_parts.append(f"**解决方案**: {exp.get('solution', '')[:200]}...")
             solution_parts.append("")
     
+    # 添加普遍性问题分析
+    if prevalence_analysis:
+        solution_parts.append("## ⚠️ 普遍性问题分析")
+        solution_parts.append("")
+        if prevalence_analysis.get('is_prevalent'):
+            prevalence_level = prevalence_analysis.get('prevalence_level', 'unknown')
+            level_labels = {
+                'critical': '🔴 严重',
+                'high': '🟠 高',
+                'medium': '🟡 中等',
+                'low': '🟢 轻微'
+            }
+            level_label = level_labels.get(prevalence_level, '未知')
+            solution_parts.append(f"### {level_label} 普遍性问题")
+            solution_parts.append("")
+            solution_parts.append("**此问题可能是普遍性问题，影响范围较广：**")
+            solution_parts.append("")
+            key_indicators = prevalence_analysis.get('key_indicators', [])
+            for indicator in key_indicators:
+                solution_parts.append(f"- {indicator}")
+            solution_parts.append("")
+            if prevalence_analysis.get('affected_countries'):
+                countries = prevalence_analysis.get('affected_countries', [])
+                solution_parts.append(f"**受影响国家/地区**: {', '.join(countries[:10])}")
+                solution_parts.append("")
+            if prevalence_analysis.get('affected_cities'):
+                cities = prevalence_analysis.get('affected_cities', [])
+                solution_parts.append(f"**受影响城市**: {', '.join(cities[:10])}")
+                solution_parts.append("")
+            recommendation = prevalence_analysis.get('recommendation', '')
+            if recommendation:
+                solution_parts.append(recommendation)
+                solution_parts.append("")
+        else:
+            solution_parts.append("### ✅ 孤立事件")
+            solution_parts.append("")
+            solution_parts.append("此问题似乎是孤立事件，影响范围有限。")
+            solution_parts.append("")
+    
     solution_parts.append("# 解决方案建议")
     solution_parts.append("")
     solution_parts.append("基于以上分析，建议采取以下措施：")
@@ -499,7 +538,8 @@ def generate_solution_document(
     solution: str,
     ticket_context: Dict[str, Any],
     project_path: str,
-    ticket_id: str
+    ticket_id: str,
+    prevalence_analysis: Optional[Dict[str, Any]] = None
 ) -> Optional[Path]:
     """
     生成解决方案文档
@@ -520,7 +560,20 @@ def generate_solution_document(
     ticket_info = ticket_context.get('ticket_info', {})
     time_range = ticket_context.get('time_range', {})
     
-    document = f"""# 工单分析解决方案
+    # 构建文档头部，如果是普遍性问题则特别标注
+    header = "# 工单分析解决方案"
+    if prevalence_analysis and prevalence_analysis.get('is_prevalent'):
+        prevalence_level = prevalence_analysis.get('prevalence_level', 'unknown')
+        level_labels = {
+            'critical': '🔴 严重普遍性问题',
+            'high': '🟠 高普遍性问题',
+            'medium': '🟡 中等普遍性问题',
+            'low': '🟢 轻微普遍性问题'
+        }
+        level_label = level_labels.get(prevalence_level, '普遍性问题')
+        header = f"# 工单分析解决方案 - ⚠️ {level_label}"
+    
+    document = f"""{header}
 
 ## 工单信息
 
@@ -528,7 +581,31 @@ def generate_solution_document(
 - **问题描述**: {ticket_info.get('description', '')[:200]}...
 - **查询时间范围**: {time_range.get('start_display', '')} - {time_range.get('end_display', '')}
 - **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+    
+    # 如果是普遍性问题，在文档开头添加警告框
+    if prevalence_analysis and prevalence_analysis.get('is_prevalent'):
+        document += f"""
+---
 
+## ⚠️ 普遍性问题警告
+
+**此问题已被识别为普遍性问题，影响范围较广，建议优先处理！**
+
+- **普遍性级别**: {prevalence_analysis.get('prevalence_level', 'unknown')}
+- **影响错误数**: {prevalence_analysis.get('affected_count', 0)}
+- **影响用户数**: {len(prevalence_analysis.get('affected_users', []))}
+- **影响设备数**: {len(prevalence_analysis.get('affected_devices', []))}
+"""
+        if prevalence_analysis.get('affected_countries'):
+            countries = prevalence_analysis.get('affected_countries', [])
+            document += f"- **受影响国家/地区**: {', '.join(countries[:10])}\n"
+        if prevalence_analysis.get('affected_cities'):
+            cities = prevalence_analysis.get('affected_cities', [])
+            document += f"- **受影响城市**: {', '.join(cities[:10])}\n"
+        document += f"\n**建议**: {prevalence_analysis.get('recommendation', '')}\n"
+    
+    document += f"""
 ---
 
 {solution}
@@ -640,7 +717,13 @@ def init_phase_2(
     
     # 生成解决方案文档
     print("\n📝 生成解决方案文档...")
-    solution_file = generate_solution_document(solution, ticket_context, project_path, ticket_id)
+    solution_file = generate_solution_document(
+        solution,
+        ticket_context,
+        project_path,
+        ticket_id,
+        prevalence_analysis
+    )
     if solution_file:
         print(f"  ✅ 解决方案文档已保存: {solution_file}")
     else:
@@ -669,6 +752,7 @@ def init_phase_2(
         'log_analysis': log_analysis,
         'code_analysis': code_analysis,
         'history_experiences': history_experiences,
+        'prevalence_analysis': prevalence_analysis,
         'solution': solution,
         'solution_file': str(solution_file) if solution_file else None,
         'experience_file': str(experience_file) if experience_file else None
