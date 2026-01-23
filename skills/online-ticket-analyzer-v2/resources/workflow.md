@@ -197,6 +197,10 @@
      - **第三步**：如果还是没有，查询该用户对应时间段所有日志
      - **第四步**：根据不同场景，可能还需要查询其他相关数据（如设备信息、地理位置等）
    - ⚠️ **重要**：不同场景查询的内容可能有差异，需要根据工单信息灵活调整
+   - ⚠️ **重要**：一般不会从`body`中去匹配关键词
+     - 优先使用结构化字段进行过滤（如`message`、`severity_text`、`request.pathname`等）
+     - 只有在确实需要搜索日志内容时，才使用`body LIKE '%关键词%'`或`message LIKE '%关键词%'`
+     - 避免过度使用`body LIKE`查询，因为性能较差
 
 2. **时间切换条件**：
    - ⚠️ **关键逻辑**：时间切换**不是**某个查询为空就切换
@@ -244,43 +248,108 @@
 
 ### 查询工具选择优先级
 
+**推荐优先级（从高到低）：**
+
 1. **signoz_execute_builder_query（Query Builder v5）** - 强烈推荐（使用毫秒时间戳）
+   - 支持日志（logs）、指标（metrics）、追踪（traces）三种数据源
+   - 更灵活，支持复杂过滤条件
+
 2. **signoz_list_services** - 必须首先执行
    - ⚠️ **重要**：需要**纳秒**时间戳，或使用 `timeRange` 参数（推荐）
    - 推荐使用 `timeRange` 参数（如 "1h", "4h", "24h"），避免时间戳单位错误
-3. **signoz_search_logs_by_service** - 备选方案（使用毫秒时间戳）
+
+3. **signoz_search_logs_by_service** - 按服务搜索日志（使用毫秒时间戳）
 4. **signoz_get_error_logs** - 快速错误查询（使用毫秒时间戳）
+
+### SigNoz MCP 工具完整列表
+
+**日志查询工具**：
+- `signoz_execute_builder_query` - Query Builder v5 查询（推荐，支持 logs/metrics/traces）
+- `signoz_search_logs_by_service` - 按服务搜索日志
+- `signoz_get_error_logs` - 获取错误日志（ERROR/FATAL）
+- `signoz_list_log_views` - 列出保存的日志视图
+- `signoz_get_log_view` - 获取日志视图详情
+- `signoz_get_logs_available_fields` - 获取日志可用字段列表
+- `signoz_get_logs_field_values` - 获取日志字段值（用于过滤选项）
+
+**追踪查询工具**：
+- `signoz_search_traces_by_service` - 按服务搜索追踪
+- `signoz_get_trace_details` - 获取追踪详情（包含所有 spans）
+- `signoz_get_trace_error_analysis` - 分析追踪中的错误模式
+- `signoz_get_trace_span_hierarchy` - 获取追踪跨度层次结构
+- `signoz_get_trace_available_fields` - 获取追踪可用字段列表
+- `signoz_get_trace_field_values` - 获取追踪字段值
+
+**指标查询工具**：
+- `signoz_list_metric_keys` - 列出可用指标键
+- `signoz_search_metric_by_text` - 按文本搜索指标
+- `signoz_get_metrics_available_fields` - 获取指标可用字段列表
+- `signoz_get_metrics_field_values` - 获取指标字段值
+
+**服务相关工具**：
+- `signoz_list_services` - 列出所有服务（必须首先执行，使用纳秒时间戳或 timeRange）
+- `signoz_get_service_top_operations` - 获取服务的顶部操作（使用纳秒时间戳或 timeRange）
+
+**仪表板工具**：
+- `signoz_list_dashboards` - 列出所有仪表板
+- `signoz_get_dashboard` - 获取仪表板详情
+- `signoz_create_dashboard` - 创建新仪表板
+- `signoz_update_dashboard` - 更新现有仪表板
+
+**警报工具**：
+- `signoz_list_alerts` - 列出所有警报规则
+- `signoz_get_alert` - 获取警报规则详情
+- `signoz_get_alert_history` - 获取警报历史记录
+- `signoz_get_logs_for_alert` - 获取与警报相关的日志
 
 ### 时间戳单位说明
 
 ⚠️ **关键问题**：不同工具使用不同的时间戳单位！
 
 - **纳秒时间戳**（需要乘以 1,000,000）：
-  - `signoz_list_services`
-  - `signoz_get_service_top_operations`
+  - `signoz_list_services` - 列出服务
+  - `signoz_get_service_top_operations` - 获取服务顶部操作
 
-- **毫秒时间戳**（标准）：
-  - `signoz_execute_builder_query`
-  - `signoz_get_error_logs`
-  - `signoz_search_logs_by_service`
-  - 其他大部分工具
+- **毫秒时间戳**（标准，大部分工具使用）：
+  - **日志查询**：`signoz_execute_builder_query`、`signoz_search_logs_by_service`、`signoz_get_error_logs`、`signoz_list_log_views`、`signoz_get_log_view`、`signoz_get_logs_available_fields`、`signoz_get_logs_field_values`
+  - **追踪查询**：`signoz_search_traces_by_service`、`signoz_get_trace_details`、`signoz_get_trace_error_analysis`、`signoz_get_trace_span_hierarchy`、`signoz_get_trace_available_fields`、`signoz_get_trace_field_values`
+  - **指标查询**：`signoz_list_metric_keys`、`signoz_search_metric_by_text`、`signoz_get_metrics_available_fields`、`signoz_get_metrics_field_values`
+  - **警报**：`signoz_list_alerts`、`signoz_get_alert`、`signoz_get_alert_history`、`signoz_get_logs_for_alert`
+  - **仪表板**：`signoz_list_dashboards`、`signoz_get_dashboard`、`signoz_create_dashboard`、`signoz_update_dashboard`
 
 **推荐解决方案**：
 - 优先使用 `timeRange` 参数（如 "1h", "4h", "24h"），避免时间戳单位错误
 - 如果必须使用 `start`/`end` 参数，确保单位正确：
-  - `list_services`: 纳秒（毫秒 × 1,000,000）
-  - 其他工具: 毫秒
+  - `signoz_list_services` 和 `signoz_get_service_top_operations`: 纳秒（毫秒 × 1,000,000）
+  - 其他所有工具: 毫秒
 
 ### Query Builder v5 格式要求
 
 ⚠️ **关键格式要求**：
+
+**🚨 快速参考：字段歧义处理（遇到警告时必看）**
+
+如果查询结果中`rows`为`null`且出现以下警告，需要**同时**在`filter.expression`和`selectFields`中明确指定：
+
+| 警告信息 | 解决方案 |
+|---------|---------|
+| `service.name is ambiguous, found 2 different combinations` | **方法1（推荐）**：在`filter.expression`中使用完整前缀：`resource.service.name IN ('cs.web.camscanner-toc')`<br>**方法2**：在`selectFields`中添加：`{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`<br>⚠️ **最佳实践**：两种方法同时使用 |
+| `user.id is ambiguous, found 3 different combinations` | **方法1（推荐）**：在`filter.expression`中使用完整前缀：`attribute.user.id = 1734170267`<br>**方法2**：在`selectFields`中添加：`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`<br>⚠️ **最佳实践**：两种方法同时使用 |
+
+**重要规则**：
+1. ⚠️ **关键**：在`filter.expression`中使用的歧义字段，**必须使用完整前缀**（`resource.`或`attribute.`）来明确指定上下文
+2. 同时在`selectFields`中为所有歧义字段明确指定`fieldContext`和`fieldDataType`
+3. 如果查询结果中`rows`为`null`且出现字段歧义警告，这是导致查询失败的主要原因，必须立即修复
+4. **修复优先级**：
+   - **优先**：在`filter.expression`中使用完整前缀（如`resource.service.name`、`attribute.user.id`）
+   - **同时**：在`selectFields`中明确指定`fieldContext`和`fieldDataType`
 
 1. **filter格式**：
    - ✅ 使用 `filter`（单数）和 `expression`（SQL-like字符串）
    - ❌ 不使用 `filters`（复数）和 `items` 数组格式
 
 2. **字段歧义处理**（重要！）：
-   - 对于有歧义的字段，**必须**在`selectFields`中明确指定`fieldContext`和`fieldDataType`
+   - 对于有歧义的字段，**必须同时**在`filter.expression`中使用完整前缀，**并在**`selectFields`中明确指定`fieldContext`和`fieldDataType`
    - **常见歧义字段**：
      - `service.name`：在resource和attribute上下文中都有string类型（通常使用resource上下文）
      - `user.id`：在attributes上下文中有3种类型：string、bool、number（int64）（通常使用int64类型）
@@ -292,8 +361,16 @@
      "key user.id is ambiguous, found 3 different combinations of field context and data type: 
      [name=user.id,context=attribute,type=number name=user.id,context=attribute,type=string name=user.id,context=attribute,type=bool]"
      ```
-   - **解决方案**：
-     - 在`selectFields`中明确指定`fieldContext`和`fieldDataType`：
+   - **完整解决方案**（必须同时使用两种方法）：
+     - **方法1（推荐，必须）**：在`filter.expression`中使用完整前缀：
+       ```json
+       {
+         "filter": {
+           "expression": "resource.service.name IN ('cs.web.camscanner-toc') AND attribute.user.id = 1734170267"
+         }
+       }
+       ```
+     - **方法2（同时使用）**：在`selectFields`中明确指定`fieldContext`和`fieldDataType`：
        ```json
        {
          "selectFields": [
@@ -313,10 +390,10 @@
        }
        ```
      - **重要规则**：
-       - `service.name`：使用`fieldContext: "resource"`（资源级别字段）
-       - `user.id`：使用`fieldContext: "attributes"`和`fieldDataType: "int64"`（根据实际数据结构）
-       - 所有在filter expression中使用的歧义字段，都必须在selectFields中明确指定
-       - 如果查询结果中`rows`为`null`，很可能是字段歧义导致的，需要在selectFields中明确指定所有歧义字段
+       - ⚠️ **关键**：在`filter.expression`中使用的歧义字段，**必须使用完整前缀**（`resource.service.name`、`attribute.user.id`）
+       - `service.name`：在filter中使用`resource.service.name`，在selectFields中使用`fieldContext: "resource"`
+       - `user.id`：在filter中使用`attribute.user.id`，在selectFields中使用`fieldContext: "attributes"`和`fieldDataType: "int64"`
+       - 如果查询结果中`rows`为`null`，很可能是字段歧义导致的，必须同时修复filter expression（使用完整前缀）和selectFields（明确指定fieldContext和fieldDataType）
 
 3. **fieldContext字段**：
    - 一般情况下：查询时不要添加`fieldContext`字段，SigNoz会自动识别
@@ -327,6 +404,127 @@
 
 5. **having字段**：
    - 必须包含：`"having": {"expression": ""}`
+
+### SigNoz Query Builder v5 支持的查询操作
+
+**数据源类型（signal）**：
+- `logs` - 日志数据：支持日志查询、过滤、聚合
+- `metrics` - 指标数据：支持指标查询、时间序列聚合、空间聚合
+- `traces` - 追踪数据：支持分布式追踪查询、span分析
+
+**过滤操作（filter.expression）**：
+
+支持SQL-like表达式，包括：
+
+1. **比较操作符**：
+   - `=` - 等于
+   - `!=` 或 `<>` - 不等于
+   - `>` - 大于
+   - `>=` - 大于等于
+   - `<` - 小于
+   - `<=` - 小于等于
+   - `IN` - 在列表中（如 `resource.service.name IN ('service1', 'service2')`）
+   - `NOT IN` - 不在列表中
+   - `LIKE` - 模式匹配（如 `message LIKE '%error%'`）
+   - `NOT LIKE` - 不匹配模式
+   - `IS NULL` - 为空
+   - `IS NOT NULL` - 不为空
+
+2. **逻辑操作符**：
+   - `AND` - 逻辑与
+   - `OR` - 逻辑或
+   - `NOT` - 逻辑非
+   - 支持括号分组：`(condition1 OR condition2) AND condition3`
+
+3. **字段路径格式**：
+   - **资源字段**：`resource.service.name`、`resource.service.version`、`resource.service.environment`
+   - **属性字段**：`attribute.user.id`、`attribute.request.pathname`、`attribute.response.status`
+   - **简化格式**（无歧义时）：`service.name`、`user.id`、`request.pathname`
+   - ⚠️ **重要**：有歧义的字段必须使用完整前缀（`resource.`或`attribute.`）
+
+4. **值类型**：
+   - **字符串**：使用单引号 `'value'`
+   - **数字**：直接使用数字，不需要引号
+   - **布尔值**：`true` 或 `false`
+   - **数组**：`IN ('value1', 'value2', 'value3')`
+
+**聚合操作（aggregations）**：
+
+1. **时间聚合（timeAggregation）**：
+   - `avg` - 平均值
+   - `sum` - 求和
+   - `min` - 最小值
+   - `max` - 最大值
+   - `count` - 计数
+   - `p50`、`p95`、`p99` - 百分位数
+
+2. **空间聚合（spaceAggregation）**：
+   - `avg` - 平均值
+   - `sum` - 求和
+   - `min` - 最小值
+   - `max` - 最大值
+   - `latest` - 最新值
+
+3. **序列聚合（seriesAggregation）**（用于groupBy时）：
+   - `avg` - 平均值
+   - `sum` - 求和
+   - `min` - 最小值
+   - `max` - 最大值
+
+4. **聚合操作符（aggregateOperator）**：
+   - `count` - 计数
+   - `count_distinct` - 去重计数
+   - `sum` - 求和
+   - `avg` - 平均值
+   - `min` - 最小值
+   - `max` - 最大值
+   - `p50`、`p95`、`p99` - 百分位数
+   - `rate` - 速率
+   - `rate_sum` - 速率求和
+   - `rate_avg` - 速率平均值
+   - `rate_max` - 速率最大值
+
+**分组操作（groupBy）**：
+- 支持按一个或多个字段分组
+- 字段格式：`{"key": "field.name", "name": "field.name", "dataType": "string", "type": "tag"}`
+- 示例：按服务名分组、按用户ID分组、按接口路径分组
+
+**排序操作（orderBy）**：
+- 支持按字段升序（`asc`）或降序（`desc`）排序
+- 格式：`{"columnName": "timestamp", "order": "desc"}`
+- 支持多字段排序
+
+**分页操作**：
+- `limit` - 限制返回记录数（默认100，最大建议1000）
+- `offset` - 跳过记录数（用于分页）
+- `pageSize` - 页面大小
+
+**字段选择（selectFields）**：
+- 指定要返回的字段
+- 支持资源字段、属性字段
+- 必须指定字段的数据类型和上下文（如有歧义）
+
+**Having子句（having）**：
+- 用于对聚合结果进行过滤
+- 格式：`{"expression": "count > 10"}`
+
+**函数支持（functions）**：
+- 支持在查询中使用函数
+- 格式：`{"name": "function_name", "args": [arg1, arg2], "namedArgs": {}}`
+
+**时间范围（start/end）**：
+- 使用毫秒时间戳
+- 或使用 `timeRange` 参数（推荐）：`"1h"`, `"4h"`, `"24h"`, `"7d"` 等
+
+**查询类型（type）**：
+- `builder_query` - Query Builder查询（推荐）
+- `clickhouse_sql` - ClickHouse SQL查询（高级用法）
+- `promql` - PromQL查询（用于指标）
+
+**查询组合（compositeQuery）**：
+- 支持多个查询组合（queries数组）
+- 支持查询公式（queryFormulas）
+- 支持查询之间的运算和组合
 
 ## 阶段2：综合分析
 

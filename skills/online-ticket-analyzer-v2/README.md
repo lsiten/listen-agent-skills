@@ -94,17 +94,34 @@
 
 本技能通过MCP协议连接SigNoz监控系统，支持：
 
-- **Query Builder v5查询** - 灵活的日志查询（推荐）
+- **Query Builder v5查询** - 灵活的日志/指标/追踪查询（推荐）
 - **服务列表查询** - 获取实际运行的服务名称
 - **错误日志查询** - 快速查询错误日志
 - **追踪查询** - 查询分布式追踪信息
+- **指标查询** - 查询指标数据
+- **仪表板管理** - 创建和管理监控仪表板
+- **警报管理** - 查看和管理警报规则
 
 ### 查询工具优先级
 
-1. **signoz_execute_builder_query** - Query Builder v5（强烈推荐）
-2. **list_services** - 必须首先执行，确认服务名称
-3. **search_logs_by_service** - 按服务搜索日志
-4. **get_error_logs** - 快速错误查询
+1. **signoz_execute_builder_query** - Query Builder v5（强烈推荐，支持 logs/metrics/traces）
+2. **signoz_list_services** - 必须首先执行，确认服务名称
+3. **signoz_search_logs_by_service** - 按服务搜索日志
+4. **signoz_get_error_logs** - 快速错误查询
+
+### 完整工具列表
+
+**日志查询**：`signoz_execute_builder_query`、`signoz_search_logs_by_service`、`signoz_get_error_logs`、`signoz_list_log_views`、`signoz_get_log_view`、`signoz_get_logs_available_fields`、`signoz_get_logs_field_values`
+
+**追踪查询**：`signoz_search_traces_by_service`、`signoz_get_trace_details`、`signoz_get_trace_error_analysis`、`signoz_get_trace_span_hierarchy`、`signoz_get_trace_available_fields`、`signoz_get_trace_field_values`
+
+**指标查询**：`signoz_list_metric_keys`、`signoz_search_metric_by_text`、`signoz_get_metrics_available_fields`、`signoz_get_metrics_field_values`
+
+**服务相关**：`signoz_list_services`、`signoz_get_service_top_operations`
+
+**仪表板**：`signoz_list_dashboards`、`signoz_get_dashboard`、`signoz_create_dashboard`、`signoz_update_dashboard`
+
+**警报**：`signoz_list_alerts`、`signoz_get_alert`、`signoz_get_alert_history`、`signoz_get_logs_for_alert`
 
 ## 数据结构
 

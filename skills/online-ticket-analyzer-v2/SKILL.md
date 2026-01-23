@@ -291,6 +291,7 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
    - 字段路径更直观
    - 支持多条件组合查询
    - 使用**毫秒**时间戳
+   - 支持日志（logs）、指标（metrics）、追踪（traces）三种数据源
 
 2. **signoz_list_services** - 必须首先执行
    - 获取服务列表，确认服务名称
@@ -298,8 +299,54 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
    - ⚠️ **重要**：需要**纳秒**时间戳（不是毫秒），或使用 `timeRange` 参数
    - **强烈推荐**：使用 `timeRange` 参数（如 "1h", "4h", "24h"），避免时间戳单位错误
 
-3. **signoz_search_logs_by_service** - 备选方案（使用毫秒时间戳）
+3. **signoz_search_logs_by_service** - 按服务搜索日志（使用毫秒时间戳）
+   - 支持文本搜索、严重程度过滤
+   - 适用于快速日志搜索场景
+
 4. **signoz_get_error_logs** - 快速错误查询（使用毫秒时间戳）
+   - 专门用于查询 ERROR 或 FATAL 级别的日志
+   - 支持服务过滤
+
+#### SigNoz MCP 工具完整列表
+
+**日志查询工具**：
+- `signoz_execute_builder_query` - Query Builder v5 查询（推荐，支持 logs/metrics/traces）
+- `signoz_search_logs_by_service` - 按服务搜索日志
+- `signoz_get_error_logs` - 获取错误日志（ERROR/FATAL）
+- `signoz_list_log_views` - 列出保存的日志视图
+- `signoz_get_log_view` - 获取日志视图详情
+- `signoz_get_logs_available_fields` - 获取日志可用字段列表
+- `signoz_get_logs_field_values` - 获取日志字段值（用于过滤选项）
+
+**追踪查询工具**：
+- `signoz_search_traces_by_service` - 按服务搜索追踪
+- `signoz_get_trace_details` - 获取追踪详情（包含所有 spans）
+- `signoz_get_trace_error_analysis` - 分析追踪中的错误模式
+- `signoz_get_trace_span_hierarchy` - 获取追踪跨度层次结构
+- `signoz_get_trace_available_fields` - 获取追踪可用字段列表
+- `signoz_get_trace_field_values` - 获取追踪字段值
+
+**指标查询工具**：
+- `signoz_list_metric_keys` - 列出可用指标键
+- `signoz_search_metric_by_text` - 按文本搜索指标
+- `signoz_get_metrics_available_fields` - 获取指标可用字段列表
+- `signoz_get_metrics_field_values` - 获取指标字段值
+
+**服务相关工具**：
+- `signoz_list_services` - 列出所有服务（必须首先执行，使用纳秒时间戳或 timeRange）
+- `signoz_get_service_top_operations` - 获取服务的顶部操作（使用纳秒时间戳或 timeRange）
+
+**仪表板工具**：
+- `signoz_list_dashboards` - 列出所有仪表板
+- `signoz_get_dashboard` - 获取仪表板详情
+- `signoz_create_dashboard` - 创建新仪表板
+- `signoz_update_dashboard` - 更新现有仪表板
+
+**警报工具**：
+- `signoz_list_alerts` - 列出所有警报规则
+- `signoz_get_alert` - 获取警报规则详情
+- `signoz_get_alert_history` - 获取警报历史记录
+- `signoz_get_logs_for_alert` - 获取与警报相关的日志
 
 #### 每个时间区间内的完整查询流程
 
@@ -321,7 +368,8 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
 
 1. **接口相关数据查询**（如果功能涉及到接口）：
    - 如果工单中提到了接口路径、API调用、接口错误等，优先查询接口相关数据
-   - **初始查询**：`service.name` + `user.id` + `request.pathname` + 时间范围
+   - **初始查询**：`resource.service.name` + `attribute.user.id` + `attribute.request.pathname` + 时间范围
+     - ⚠️ **关键**：如果字段有歧义，在`filter.expression`中必须使用完整前缀（`resource.service.name`、`attribute.user.id`）
    - 查询字段：`request.pathname`, `request.method`, `response.status`, `response.body`, `duration_nano`等
    - ⚠️ **迭代查询**：如果初始查询有数据但无法定位问题，分析结果后生成补充查询：
      - 如果发现特定接口有问题，查询该接口的详细日志
@@ -333,22 +381,25 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
 
 2. **报错相关数据查询**：
    - 如果接口查询无结果或数据无法定位问题，或工单中提到了错误、异常、失败等，查询报错相关数据
-   - **初始查询**：`service.name` + `user.id` + `severity_text IN ('error', 'Error', 'ERROR', 'fatal', 'Fatal', 'FATAL')` + 时间范围
+   - **初始查询**：`resource.service.name` + `attribute.user.id` + `severity_text IN ('error', 'Error', 'ERROR', 'fatal', 'Fatal', 'FATAL')` + 时间范围
+     - ⚠️ **关键**：如果字段有歧义，在`filter.expression`中必须使用完整前缀（`resource.service.name`、`attribute.user.id`）
    - 查询字段：`severity_text`, `body`, `message`, `error.message`, `error.stack`等
    - ⚠️ **迭代查询**：如果初始查询有数据但无法定位问题，分析结果后生成补充查询：
      - 如果发现特定错误类型，查询该错误类型的所有日志
      - 如果发现错误堆栈，查询包含相同堆栈的所有错误
-     - 如果发现错误消息模式，查询匹配该模式的所有错误
+     - 如果发现错误消息模式，查询匹配该模式的所有错误（优先使用`message`字段，而不是`body`）
    - ⚠️ **判断标准**：如果查询到数据，需要判断数据是否**相关**和**能够定位到问题原因**
    - 如果数据能够定位到问题原因，可以提前终止（不再查询后续类型）
    - 如果查询为空或数据不相关无法定位问题，继续下一步
 
 3. **所有日志查询**：
    - 如果前两步都无结果或数据无法定位问题，查询该用户对应时间段所有日志
-   - **初始查询**：`service.name` + `user.id` + 时间范围
+   - **初始查询**：`resource.service.name` + `attribute.user.id` + 时间范围
+     - ⚠️ **关键**：如果字段有歧义，在`filter.expression`中必须使用完整前缀（`resource.service.name`、`attribute.user.id`）
    - 查询字段：`body`, `message`, `severity_text`, `timestamp`等所有相关字段
    - ⚠️ **迭代查询**：如果初始查询有数据但无法定位问题，分析结果后生成补充查询：
-     - 如果发现关键词模式，查询包含该关键词的所有日志
+     - 如果发现关键词模式，优先使用结构化字段（如`message`）进行查询，而不是`body`
+     - ⚠️ **重要**：一般不会从`body`中去匹配关键词，优先使用结构化字段
      - 如果发现时间模式，查询特定时间段的日志
      - 如果发现设备或地理位置模式，查询特定设备或地理位置的日志
    - ⚠️ **判断标准**：如果查询到数据，需要判断数据是否**相关**和**能够定位到问题原因**
@@ -361,7 +412,10 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
      - 地理位置：`geo.city_name`, `geo.country_name`等
      - 浏览器信息：`browser.name`, `browser.version`等
      - 应用版本：`service.version`等
-   - 如果工单中提到了关键词，可以添加关键词过滤：`body LIKE '%关键词%' OR message LIKE '%关键词%'`
+   - ⚠️ **重要**：一般不会从`body`中去匹配关键词
+     - 优先使用结构化字段进行过滤（如`message`、`severity_text`、`request.pathname`等）
+     - 只有在确实需要搜索日志内容时，才使用`body LIKE '%关键词%'`或`message LIKE '%关键词%'`
+     - 避免过度使用`body LIKE`查询，因为性能较差
 
 **时间切换条件**：
 - ⚠️ **关键逻辑**：必须执行完当前时间区间内的**所有查询**（接口相关 → 报错相关 → 所有日志 → 其他相关）
@@ -374,20 +428,21 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
 ⚠️ **关键问题**：不同工具使用不同的时间戳单位！
 
 - **纳秒时间戳**（需要乘以 1,000,000）：
-  - `signoz_list_services`
-  - `signoz_get_service_top_operations`
+  - `signoz_list_services` - 列出服务
+  - `signoz_get_service_top_operations` - 获取服务顶部操作
 
-- **毫秒时间戳**（标准）：
-  - `signoz_execute_builder_query`
-  - `signoz_get_error_logs`
-  - `signoz_search_logs_by_service`
-  - 其他大部分工具
+- **毫秒时间戳**（标准，大部分工具使用）：
+  - **日志查询**：`signoz_execute_builder_query`、`signoz_search_logs_by_service`、`signoz_get_error_logs`、`signoz_list_log_views`、`signoz_get_log_view`、`signoz_get_logs_available_fields`、`signoz_get_logs_field_values`
+  - **追踪查询**：`signoz_search_traces_by_service`、`signoz_get_trace_details`、`signoz_get_trace_error_analysis`、`signoz_get_trace_span_hierarchy`、`signoz_get_trace_available_fields`、`signoz_get_trace_field_values`
+  - **指标查询**：`signoz_list_metric_keys`、`signoz_search_metric_by_text`、`signoz_get_metrics_available_fields`、`signoz_get_metrics_field_values`
+  - **警报**：`signoz_list_alerts`、`signoz_get_alert`、`signoz_get_alert_history`、`signoz_get_logs_for_alert`
+  - **仪表板**：`signoz_list_dashboards`、`signoz_get_dashboard`、`signoz_create_dashboard`、`signoz_update_dashboard`
 
 **推荐解决方案**：
 - **优先使用 `timeRange` 参数**（如 "1h", "4h", "24h"），避免时间戳单位错误
 - 如果必须使用 `start`/`end` 参数，确保单位正确：
-  - `signoz_list_services`: 纳秒（毫秒 × 1,000,000）
-  - 其他工具: 毫秒
+  - `signoz_list_services` 和 `signoz_get_service_top_operations`: 纳秒（毫秒 × 1,000,000）
+  - 其他所有工具: 毫秒
 
 #### Query Builder v5 格式要求
 
@@ -395,24 +450,27 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
 
 **🚨 快速参考：字段歧义处理（遇到警告时必看）**
 
-如果查询结果中`rows`为`null`且出现以下警告，必须在`selectFields`中明确指定：
+如果查询结果中`rows`为`null`且出现以下警告，需要**同时**在`filter.expression`和`selectFields`中明确指定：
 
 | 警告信息 | 解决方案 |
 |---------|---------|
-| `service.name is ambiguous, found 2 different combinations` | 在`selectFields`中添加：`{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}` |
-| `user.id is ambiguous, found 3 different combinations` | 在`selectFields`中添加：`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`（注意：虽然警告中显示有string、bool、number三种类型，但通常使用number/int64类型） |
+| `service.name is ambiguous, found 2 different combinations` | **方法1（推荐）**：在`filter.expression`中使用完整前缀：`resource.service.name IN ('cs.web.camscanner-toc')`<br>**方法2**：在`selectFields`中添加：`{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`<br>⚠️ **最佳实践**：两种方法同时使用 |
+| `user.id is ambiguous, found 3 different combinations` | **方法1（推荐）**：在`filter.expression`中使用完整前缀：`attribute.user.id = 1734170267`<br>**方法2**：在`selectFields`中添加：`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`<br>⚠️ **最佳实践**：两种方法同时使用 |
 
-**重要**：
-1. 所有在`filter.expression`中使用的歧义字段，都必须在`selectFields`中明确指定！
-2. 如果查询结果中`rows`为`null`且出现字段歧义警告，这是导致查询失败的主要原因，必须立即修复
-3. 修复方法：在`selectFields`中为所有歧义字段明确指定`fieldContext`和`fieldDataType`
+**重要规则**：
+1. ⚠️ **关键**：在`filter.expression`中使用的歧义字段，**必须使用完整前缀**（`resource.`或`attribute.`）来明确指定上下文
+2. 同时在`selectFields`中为所有歧义字段明确指定`fieldContext`和`fieldDataType`
+3. 如果查询结果中`rows`为`null`且出现字段歧义警告，这是导致查询失败的主要原因，必须立即修复
+4. **修复优先级**：
+   - **优先**：在`filter.expression`中使用完整前缀（如`resource.service.name`、`attribute.user.id`）
+   - **同时**：在`selectFields`中明确指定`fieldContext`和`fieldDataType`
 
 1. **filter格式**：
    - ✅ 使用 `filter`（单数）和 `expression`（SQL-like字符串）
    - ❌ 不使用 `filters`（复数）和 `items` 数组格式
 
 2. **字段歧义处理**（重要！）：
-   - 对于有歧义的字段，**必须**在`selectFields`中明确指定`fieldContext`和`fieldDataType`
+   - 对于有歧义的字段，**必须**在`filter.expression`中使用完整前缀，**同时**在`selectFields`中明确指定`fieldContext`和`fieldDataType`
    - **常见歧义字段**：
      - `service.name`：在resource和attribute上下文中都有string类型（通常使用resource上下文）
      - `user.id`：在attributes上下文中有3种类型：string、bool、number（int64）（通常使用int64类型）
@@ -424,8 +482,16 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
      "key user.id is ambiguous, found 3 different combinations of field context and data type: 
      [name=user.id,context=attribute,type=number name=user.id,context=attribute,type=string name=user.id,context=attribute,type=bool]"
      ```
-   - **解决方案**：
-     - 在`selectFields`中明确指定`fieldContext`和`fieldDataType`：
+   - **完整解决方案**（必须同时使用两种方法）：
+     - **方法1（推荐，必须）**：在`filter.expression`中使用完整前缀：
+       ```json
+       {
+         "filter": {
+           "expression": "resource.service.name IN ('cs.web.camscanner-toc') AND attribute.user.id = 1734170267"
+         }
+       }
+       ```
+     - **方法2（同时使用）**：在`selectFields`中明确指定`fieldContext`和`fieldDataType`：
        ```json
        {
          "selectFields": [
@@ -445,10 +511,10 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
        }
        ```
      - **重要规则**：
-       - `service.name`：使用`fieldContext: "resource"`（资源级别字段）
-       - `user.id`：使用`fieldContext: "attributes"`和`fieldDataType: "int64"`（根据实际数据结构）
-       - 所有在filter expression中使用的歧义字段，都必须在selectFields中明确指定
-       - 如果查询结果中`rows`为`null`，很可能是字段歧义导致的，需要在selectFields中明确指定所有歧义字段
+       - ⚠️ **关键**：在`filter.expression`中使用的歧义字段，**必须使用完整前缀**（`resource.service.name`、`attribute.user.id`）
+       - `service.name`：在filter中使用`resource.service.name`，在selectFields中使用`fieldContext: "resource"`
+       - `user.id`：在filter中使用`attribute.user.id`，在selectFields中使用`fieldContext: "attributes"`和`fieldDataType: "int64"`
+       - 如果查询结果中`rows`为`null`，很可能是字段歧义导致的，必须同时修复filter expression和selectFields
 
 3. **fieldContext字段**：
    - 一般情况下：查询时不要添加`fieldContext`字段，SigNoz会自动识别
@@ -462,6 +528,127 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
 
 6. **order字段**：
    - key只包含name：`{"key": {"name": "timestamp"}, "direction": "desc"}`
+
+#### SigNoz Query Builder v5 支持的查询操作
+
+**数据源类型（signal）**：
+- `logs` - 日志数据：支持日志查询、过滤、聚合
+- `metrics` - 指标数据：支持指标查询、时间序列聚合、空间聚合
+- `traces` - 追踪数据：支持分布式追踪查询、span分析
+
+**过滤操作（filter.expression）**：
+
+支持SQL-like表达式，包括：
+
+1. **比较操作符**：
+   - `=` - 等于
+   - `!=` 或 `<>` - 不等于
+   - `>` - 大于
+   - `>=` - 大于等于
+   - `<` - 小于
+   - `<=` - 小于等于
+   - `IN` - 在列表中（如 `service.name IN ('service1', 'service2')`）
+   - `NOT IN` - 不在列表中
+   - `LIKE` - 模式匹配（如 `message LIKE '%error%'`）
+   - `NOT LIKE` - 不匹配模式
+   - `IS NULL` - 为空
+   - `IS NOT NULL` - 不为空
+
+2. **逻辑操作符**：
+   - `AND` - 逻辑与
+   - `OR` - 逻辑或
+   - `NOT` - 逻辑非
+   - 支持括号分组：`(condition1 OR condition2) AND condition3`
+
+3. **字段路径格式**：
+   - **资源字段**：`resource.service.name`、`resource.service.version`、`resource.service.environment`
+   - **属性字段**：`attribute.user.id`、`attribute.request.pathname`、`attribute.response.status`
+   - **简化格式**（无歧义时）：`service.name`、`user.id`、`request.pathname`
+   - ⚠️ **重要**：有歧义的字段必须使用完整前缀（`resource.`或`attribute.`）
+
+4. **值类型**：
+   - **字符串**：使用单引号 `'value'`
+   - **数字**：直接使用数字，不需要引号
+   - **布尔值**：`true` 或 `false`
+   - **数组**：`IN ('value1', 'value2', 'value3')`
+
+**聚合操作（aggregations）**：
+
+1. **时间聚合（timeAggregation）**：
+   - `avg` - 平均值
+   - `sum` - 求和
+   - `min` - 最小值
+   - `max` - 最大值
+   - `count` - 计数
+   - `p50`、`p95`、`p99` - 百分位数
+
+2. **空间聚合（spaceAggregation）**：
+   - `avg` - 平均值
+   - `sum` - 求和
+   - `min` - 最小值
+   - `max` - 最大值
+   - `latest` - 最新值
+
+3. **序列聚合（seriesAggregation）**（用于groupBy时）：
+   - `avg` - 平均值
+   - `sum` - 求和
+   - `min` - 最小值
+   - `max` - 最大值
+
+4. **聚合操作符（aggregateOperator）**：
+   - `count` - 计数
+   - `count_distinct` - 去重计数
+   - `sum` - 求和
+   - `avg` - 平均值
+   - `min` - 最小值
+   - `max` - 最大值
+   - `p50`、`p95`、`p99` - 百分位数
+   - `rate` - 速率
+   - `rate_sum` - 速率求和
+   - `rate_avg` - 速率平均值
+   - `rate_max` - 速率最大值
+
+**分组操作（groupBy）**：
+- 支持按一个或多个字段分组
+- 字段格式：`{"key": "field.name", "name": "field.name", "dataType": "string", "type": "tag"}`
+- 示例：按服务名分组、按用户ID分组、按接口路径分组
+
+**排序操作（orderBy）**：
+- 支持按字段升序（`asc`）或降序（`desc`）排序
+- 格式：`{"columnName": "timestamp", "order": "desc"}`
+- 支持多字段排序
+
+**分页操作**：
+- `limit` - 限制返回记录数（默认100，最大建议1000）
+- `offset` - 跳过记录数（用于分页）
+- `pageSize` - 页面大小
+
+**字段选择（selectFields）**：
+- 指定要返回的字段
+- 支持资源字段、属性字段
+- 必须指定字段的数据类型和上下文（如有歧义）
+
+**Having子句（having）**：
+- 用于对聚合结果进行过滤
+- 格式：`{"expression": "count > 10"}`
+
+**函数支持（functions）**：
+- 支持在查询中使用函数
+- 格式：`{"name": "function_name", "args": [arg1, arg2], "namedArgs": {}}`
+
+**时间范围（start/end）**：
+- 使用毫秒时间戳
+- 或使用 `timeRange` 参数（推荐）：`"1h"`, `"4h"`, `"24h"`, `"7d"` 等
+
+**查询类型（type）**：
+- `builder_query` - Query Builder查询（推荐）
+- `clickhouse_sql` - ClickHouse SQL查询（高级用法）
+- `promql` - PromQL查询（用于指标）
+
+**查询组合（compositeQuery）**：
+- 支持多个查询组合（queries数组）
+- 支持查询公式（queryFormulas）
+- 支持查询之间的运算和组合
 
 #### 查询指令结构
 
@@ -708,21 +895,35 @@ SigNoz使用OpenTelemetry标准，将字段分为不同的上下文级别：
 
 在查询和结果解析中，字段可以使用以下格式：
 
-1. **简化格式**（推荐）：
-   - `service.name` - 自动识别为resource级别
+1. **简化格式**（无歧义时使用）：
+   - `service.name` - 自动识别为resource级别（如果无歧义）
    - `body` - 自动识别为attributes级别
-   - `user.id` - 自动识别为attributes级别（嵌套字段）
+   - `user.id` - 自动识别为attributes级别（嵌套字段，如果无歧义）
 
-2. **完整路径格式**：
-   - `resources.service.name` - 明确指定resources级别（注意是复数）
-   - `attributes.body` - 明确指定attributes级别
-   - `attributes.user.id` - 明确指定attributes下的嵌套字段
+2. **完整前缀格式**（有歧义时**必须**使用）：
+   - ⚠️ **关键**：当字段有歧义时，在`filter.expression`中**必须使用完整前缀**：
+     - `resource.service.name` - 明确指定resource级别（注意是单数`resource`，不是`resources`）
+     - `attribute.user.id` - 明确指定attribute级别（注意是单数`attribute`，不是`attributes`）
+     - `attribute.user.client_id` - 明确指定attribute级别
+     - `attribute.request.pathname` - 明确指定attribute级别
+     - `attribute.response.status` - 明确指定attribute级别
 
-3. **嵌套字段**（重要）：
+3. **selectFields格式**（有歧义时**必须**同时使用）：
+   - 在`selectFields`中使用`fieldContext`字段：
+     - `{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`
+     - `{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`
+
+4. **嵌套字段**（重要）：
    - `user.id` - 嵌套在attributes.user对象下的id字段（不是user_id）
    - `user.client_id` - 嵌套在attributes.user对象下的client_id字段（不是client_id）
    - `geo.city_name` - 嵌套在attributes.geo对象下的city_name字段
    - `request.pathname` - 嵌套在attributes.request对象下的pathname字段
+
+⚠️ **字段歧义处理规则**：
+- 如果字段有歧义警告，**必须同时**：
+  1. 在`filter.expression`中使用完整前缀（`resource.`或`attribute.`）
+  2. 在`selectFields`中明确指定`fieldContext`和`fieldDataType`
+- 仅仅在`selectFields`中指定是不够的，**必须同时在`filter.expression`中使用完整前缀**！
 
 ### 严重程度（Severity）
 
@@ -755,38 +956,85 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 ```json
 {
   "filter": {
-    "expression": "service.name IN ('事业部.小组.项目名') AND severity_text IN ('error', 'Error', 'ERROR')"
+    "expression": "resource.service.name IN ('事业部.小组.项目名') AND severity_text IN ('error', 'Error', 'ERROR')"
   },
   "having": {
     "expression": ""
-  }
+  },
+  "selectFields": [
+    {
+      "name": "service.name",
+      "fieldContext": "resource",
+      "fieldDataType": "string",
+      "signal": "logs"
+    }
+  ]
 }
 ```
+
+**注意**：
+- ⚠️ **关键**：在`filter.expression`中必须使用完整前缀：`resource.service.name`（不是`service.name`）
+- 如果`service.name`有歧义，必须同时在selectFields中明确指定`fieldContext: "resource"`
 
 #### 示例2：查询特定用户的日志
 
 ```json
 {
   "filter": {
-    "expression": "user.id = 4472431079"
+    "expression": "attribute.user.id = 4472431079"
   },
   "having": {
     "expression": ""
-  }
+  },
+  "selectFields": [
+    {
+      "name": "user.id",
+      "fieldContext": "attributes",
+      "fieldDataType": "int64",
+      "signal": "logs"
+    }
+  ]
 }
 ```
 
 **注意**：
+- ⚠️ **关键**：在`filter.expression`中必须使用完整前缀：`attribute.user.id`（不是`user.id`）
 - 字段名是 `user.id`（点分隔），不是 `user_id`
 - user.id字段类型是int64，值应该是数字，不需要引号
-- ⚠️ **重要**：`user.id`字段有歧义，必须在selectFields中明确指定`fieldContext: "attributes"`和`fieldDataType: "int64"`
+- ⚠️ **重要**：`user.id`字段有歧义，必须**同时**：1) 在filter.expression中使用`attribute.user.id`；2) 在selectFields中明确指定`fieldContext: "attributes"`和`fieldDataType: "int64"`
 
 #### 示例3：查询特定设备的日志
 
 ```json
 {
   "filter": {
-    "expression": "user.client_id = 'B4SMfdd5F0FW83e1a18rfA5J'"
+    "expression": "attribute.user.client_id = 'B4SMfdd5F0FW83e1a18rfA5J'"
+  },
+  "having": {
+    "expression": ""
+  },
+  "selectFields": [
+    {
+      "name": "user.client_id",
+      "fieldContext": "attributes",
+      "fieldDataType": "string",
+      "signal": "logs"
+    }
+  ]
+}
+```
+
+**注意**：
+- ⚠️ **关键**：在`filter.expression`中建议使用完整前缀：`attribute.user.client_id`（如果字段有歧义）
+- 字段名是 `user.client_id`（点分隔），不是 `client_id` 或 `device_id`
+- ⚠️ **重要**：如果`user.client_id`字段有歧义，必须**同时**：1) 在filter.expression中使用`attribute.user.client_id`；2) 在selectFields中明确指定`fieldContext: "attributes"`和`fieldDataType: "string"`
+
+#### 示例4：查询特定接口的错误日志
+
+```json
+{
+  "filter": {
+    "expression": "attribute.request.pathname = '/api/login' AND attribute.response.status IN (500, 502, 503)"
   },
   "having": {
     "expression": ""
@@ -795,25 +1043,12 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 ```
 
 **注意**：
-- 字段名是 `user.client_id`（点分隔），不是 `client_id` 或 `device_id`
-- ⚠️ **重要**：`user.client_id`字段可能有歧义，建议在selectFields中明确指定`fieldContext: "attributes"`和`fieldDataType: "string"`
-
-#### 示例4：查询特定接口的错误日志
-
-```json
-{
-  "filter": {
-    "expression": "request.pathname = '/api/login' AND response.status IN (500, 502, 503)"
-  },
-  "having": {
-    "expression": ""
-  }
-}
-```
+- ⚠️ **关键**：如果字段有歧义，在`filter.expression`中使用完整前缀：`attribute.request.pathname`、`attribute.response.status`
+- 一般`request.pathname`和`response.status`不会有歧义，但如果出现警告，需要使用`attribute.`前缀
 
 #### 示例5：处理字段歧义（完整示例）
 
-如果遇到"key is ambiguous"警告，需要在selectFields中明确指定fieldContext和fieldDataType：
+如果遇到"key is ambiguous"警告，需要**同时**在`filter.expression`中使用完整前缀，**并在**`selectFields`中明确指定fieldContext和fieldDataType：
 
 **警告示例**：
 ```
@@ -824,7 +1059,7 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 [name=user.id,context=attribute,type=number name=user.id,context=attribute,type=string name=user.id,context=attribute,type=bool]"
 ```
 
-**完整解决方案**：在selectFields中明确指定所有歧义字段的fieldContext和fieldDataType：
+**完整解决方案**（必须同时使用两种方法）：
 
 ```json
 {
@@ -1071,10 +1306,13 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 5. **验证结果** - 检查查询结果是否能够定位到问题
    - ⚠️ **首先检查查询是否成功**：
      - 如果查询结果中`rows`为`null`，检查是否有字段歧义警告（`warnings`数组）
-     - 如果有字段歧义警告，必须修复：在`selectFields`中为所有歧义字段明确指定`fieldContext`和`fieldDataType`，然后重新执行查询
-     - 常见字段歧义警告：
-       - `service.name`歧义：添加`{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`
-       - `user.id`歧义：添加`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`
+     - 如果有字段歧义警告，必须修复：**同时使用两种方法**：
+       1. **在`filter.expression`中使用完整前缀**：`service.name` → `resource.service.name`，`user.id` → `attribute.user.id`
+       2. **在`selectFields`中明确指定**：为所有歧义字段明确指定`fieldContext`和`fieldDataType`
+     - 然后重新执行查询
+     - 常见字段歧义警告及修复：
+       - `service.name`歧义：filter中使用`resource.service.name`，selectFields中添加`{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`
+       - `user.id`歧义：filter中使用`attribute.user.id`，selectFields中添加`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`
    - ⚠️ **重要判断**：如果查询成功，不仅仅检查是否有数据，还要判断数据是否**相关**和**能够定位到问题**
    - 如果当前时间区间内任意一个查询有数据并且**相关数据能够定位到问题**，**不再查询**后续时间优先级
    - 如果当前时间区间内所有查询都执行完毕，但**所有查询结果都无法定位到问题**（无数据或数据不相关），继续查询下一个时间优先级
@@ -1215,8 +1453,8 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 | 问题 | 原因 | 解决方案 |
 |------|------|----------|
 | 查询结果为空 | 时间范围不正确、服务名称不匹配、字段歧义、时间戳单位错误 | 检查时间范围、确认服务名称、明确字段上下文、检查时间戳单位 |
-| 字段歧义错误 | 字段名在多个上下文中存在，导致rows为null | 在selectFields中明确指定fieldContext和fieldDataType（service.name用resource，user.id用attributes+int64） |
-| rows为null | 字段歧义未处理，查询无法正确执行 | 检查警告信息，在selectFields中明确指定所有歧义字段 |
+| 字段歧义错误 | 字段名在多个上下文中存在，导致rows为null | **必须同时使用两种方法**：1) 在filter.expression中使用完整前缀（resource.service.name、attribute.user.id）；2) 在selectFields中明确指定fieldContext和fieldDataType（service.name用resource，user.id用attributes+int64） |
+| rows为null | 字段歧义未处理，查询无法正确执行 | 检查警告信息，**必须同时修复**：1) filter.expression中使用完整前缀；2) selectFields中明确指定所有歧义字段 |
 | 服务名称不匹配 | 代码中的服务名与运行时不同 | 首先执行list_services确认实际服务名 |
 | 时间戳单位错误 | list_services需要纳秒，其他工具需要毫秒 | 使用timeRange参数（推荐），或确保时间戳单位正确 |
 | 时间范围过窄 | 查询时间范围小于2小时 | 自动扩展为+/- 2小时 |
@@ -1249,10 +1487,14 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
    - **常见警告示例**：
      - `"key service.name is ambiguous, found 2 different combinations of field context and data type: [name=service.name,context=resource,type=string name=service.name,context=attribute,type=string]"`
      - `"key user.id is ambiguous, found 3 different combinations of field context and data type: [name=user.id,context=attribute,type=string name=user.id,context=attribute,type=bool name=user.id,context=attribute,type=number]"`
-   - **解决方案**：在`selectFields`中为所有歧义字段明确指定`fieldContext`和`fieldDataType`：
-     - `service.name`：添加`{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`
-     - `user.id`：添加`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`（虽然警告中显示有string、bool、number三种类型，但通常使用number/int64类型）
-   - ⚠️ **重要**：所有在`filter.expression`中使用的歧义字段，都必须在`selectFields`中明确指定！
+   - **完整解决方案**（必须同时使用两种方法）：
+     - **方法1（推荐，必须）**：在`filter.expression`中使用完整前缀：
+       - `service.name` → 改为 `resource.service.name`
+       - `user.id` → 改为 `attribute.user.id`
+     - **方法2（同时使用）**：在`selectFields`中为所有歧义字段明确指定`fieldContext`和`fieldDataType`：
+       - `service.name`：添加`{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`
+       - `user.id`：添加`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`（虽然警告中显示有string、bool、number三种类型，但通常使用number/int64类型）
+   - ⚠️ **重要**：仅仅在`selectFields`中指定是不够的，**必须同时在`filter.expression`中使用完整前缀**（`resource.`或`attribute.`）！
 6. **查看分析摘要** - 检查`.online-ticket-analyzer/tickets/ticket_xxx/analysis_summary.json`中的本地分析摘要
 7. **分析错误信息** - 从错误信息中提取线索，调整查询策略
 
@@ -1260,12 +1502,13 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 
 虽然你的核心能力是独立思考和执行，但在某些情况下，可以使用以下辅助工具：
 
-- **SigNoz MCP工具** - 用于查询日志、错误、追踪等信息
-  - `signoz_execute_builder_query` - Query Builder v5查询（推荐，使用毫秒时间戳）
-  - `signoz_list_services` - 获取服务列表（必须首先执行，使用纳秒时间戳或timeRange参数）
-  - `signoz_search_logs_by_service` - 按服务搜索日志（使用毫秒时间戳）
-  - `signoz_get_error_logs` - 获取错误日志（使用毫秒时间戳）
-  - 其他SigNoz MCP工具
+- **SigNoz MCP工具** - 用于查询日志、错误、追踪、指标等信息
+  - **日志查询**：`signoz_execute_builder_query`（推荐）、`signoz_search_logs_by_service`、`signoz_get_error_logs`、`signoz_list_log_views`、`signoz_get_log_view`、`signoz_get_logs_available_fields`、`signoz_get_logs_field_values`
+  - **追踪查询**：`signoz_search_traces_by_service`、`signoz_get_trace_details`、`signoz_get_trace_error_analysis`、`signoz_get_trace_span_hierarchy`、`signoz_get_trace_available_fields`、`signoz_get_trace_field_values`
+  - **指标查询**：`signoz_list_metric_keys`、`signoz_search_metric_by_text`、`signoz_get_metrics_available_fields`、`signoz_get_metrics_field_values`
+  - **服务相关**：`signoz_list_services`（必须首先执行）、`signoz_get_service_top_operations`
+  - **仪表板**：`signoz_list_dashboards`、`signoz_get_dashboard`、`signoz_create_dashboard`、`signoz_update_dashboard`
+  - **警报**：`signoz_list_alerts`、`signoz_get_alert`、`signoz_get_alert_history`、`signoz_get_logs_for_alert`
   - ⚠️ **重要**：查询结果必须在本地进行分析，提取关键信息，不要将原始数据全部丢给大模型
   - ⚠️ **时间戳单位注意**：
     - `signoz_list_services` 和 `signoz_get_service_top_operations` 需要**纳秒**时间戳
