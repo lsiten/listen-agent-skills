@@ -33,19 +33,27 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
 
 ## 整体工作流程
 
+⚠️ **关键原则：必须按顺序执行，不能跳过任何阶段！**
+
 ```
 用户输入问题描述（支持图文、图、文字、文件等）
     ↓
-【阶段0：首次使用检查】
-    ├─ AI通读项目，生成项目全局上下文（project_context.json）
-    └─ AI通读项目，生成SigNoz配置信息（signoz_config.json）
+【阶段0：首次使用检查】⚠️ 必须首先执行！
+    ├─ 🔍 检查 .online-ticket-analyzer/project_context.json 是否存在
+    ├─ 🔍 检查 .online-ticket-analyzer/signoz_config.json 是否存在
+    ├─ ❌ 如果任一文件不存在：
+    │   ├─ AI通读项目，生成项目全局上下文（project_context.json）
+    │   └─ AI通读项目，生成SigNoz配置信息（signoz_config.json）
+    │   └─ ⚠️ 必须等待文件生成完成后才能进入阶段1
+    └─ ✅ 如果两个文件都存在：直接进入阶段1
     ↓
-【阶段1：准备与指令生成】
+【阶段1：准备与指令生成】⚠️ 必须在阶段0完成后执行！
+    ├─ ⚠️ 前置检查：确认 project_context.json 和 signoz_config.json 已存在
     ├─ 加载项目全局上下文和SigNoz配置
     ├─ 解析用户输入（提取工单信息：服务名、时间、用户信息、设备信息、接口信息等）
     ├─ AI分析多发送方和多时间（如果是邮件沟通记录）
     ├─ 计算查询时间范围（支持多个时间点）
-    ├─ 保存工单上下文
+    ├─ 创建工单目录和保存 ticket_info.json ⚠️ 必须先保存工单信息
     └─ 生成MCP调用指令（mcp_instructions.json）
     ↓
 【等待AI执行MCP查询】
@@ -68,7 +76,34 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
     └─ 输出解决方案文档（solution.md 或 preliminary_analysis.md，必须生成）
 ```
 
+### ⚠️ 执行顺序强制约束
+
+**绝对禁止**：
+- ❌ 在阶段0完成之前创建 ticket_info.json
+- ❌ 在阶段0完成之前生成 mcp_instructions.json
+- ❌ 跳过配置文件检查直接开始工单分析
+
+**必须遵守**：
+- ✅ 首先检查 `.online-ticket-analyzer/project_context.json` 是否存在
+- ✅ 首先检查 `.online-ticket-analyzer/signoz_config.json` 是否存在
+- ✅ 如果配置文件不存在，必须先生成配置文件
+- ✅ 只有在配置文件存在后，才能创建工单目录和文件
+
 ## 阶段0：首次使用检查
+
+⚠️ **这是整个工作流程的第一步，必须在任何工单分析之前完成！**
+
+### 前置检查（每次工单分析前必须执行）
+
+在开始任何工单分析之前，**必须首先执行**以下检查：
+
+```
+1. 检查 .online-ticket-analyzer/project_context.json 是否存在
+2. 检查 .online-ticket-analyzer/signoz_config.json 是否存在
+
+如果两个文件都存在 → 跳过阶段0，直接进入阶段1
+如果任一文件不存在 → 必须执行完整的阶段0流程
+```
 
 ### 主要任务
 
@@ -188,12 +223,130 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
 - **发送方信息**：多个发送方（如果是邮件沟通记录）
 
 ⚠️ **用户/设备信息缺失处理**：
-- **如果工单中没有提供用户信息或设备信息**：
-  1. **尝试通过其他信息定位**：先尝试通过工单中其他信息（如接口路径、错误信息、关键词、时间范围、地理位置等）+ 代码相关逻辑生成相关查询
-  2. **从查询结果中提取**：通过查询定位到该用户，从数据中获取`user.id`或`user.client_id`
-  3. **迭代查询**：如果首次查询没有用户ID，可以根据设备ID等信息进行查询，然后从结果中提取用户ID；反之亦然
-  4. **无法定位时**：如果完全无法定位到用户或设备信息，则提示用户提供相关信息
-- **关键原则**：充分利用工单中的所有信息（服务名、时间、接口、错误信息、关键词等）和代码逻辑，尝试定位用户，而不是直接要求用户提供信息
+
+**常见场景：用户未登录**
+- 当用户反馈问题时未登录，工单中没有 `user.id`
+- 此时需要**优先查询 `user.client_id`（设备ID）**来定位用户
+- 设备ID通常在用户首次访问时生成，即使未登录也会存在
+
+**处理流程**：
+
+1. **判断用户登录状态**：
+   - 如果工单中有 `user.id` → 直接使用 `user.id` 进行查询
+   - 如果工单中没有 `user.id`（未登录场景）→ 进入步骤2
+
+2. **尝试获取 `user.client_id`**：
+   - **方式一**：检查工单中是否直接提供了设备ID/客户端ID
+   - **方式二**：通过其他信息定位（接口路径、错误信息、关键词、时间范围、IP地址、地理位置等）+ 代码相关逻辑生成查询
+   - **方式三**：如果有邮箱/账号信息，先查询该账号最近的登录记录，从中获取 `user.client_id`
+   - 从查询结果中提取 `user.client_id`
+
+3. **使用 `user.client_id` 进行查询**：
+   - 获取到 `user.client_id` 后，使用它进行后续的日志查询
+   - 查询时使用：`attribute.user.client_id = 'xxx'`
+
+4. **⚠️ 无法定位时必须停止流程**：
+   - 如果通过以上所有方式都无法获取到 `user.id` 或 `user.client_id`
+   - **必须立即停止查询流程**
+   - 生成初步分析文档（`preliminary_analysis.md`），明确告知用户：
+     - 当前无法定位到具体用户或设备
+     - 请用户提供以下信息之一：用户ID、设备ID、账号、邮箱、或能够定位用户的其他信息
+   - **不要继续执行无效查询**，避免浪费资源
+
+**关键原则**：
+- 充分利用工单中的所有信息（服务名、时间、接口、错误信息、关键词、IP地址等）和代码逻辑，尝试定位用户
+- 优先尝试自动定位，而不是直接要求用户提供信息
+- 但如果确实无法定位，必须明确停止并请求更多信息，不要进行无意义的广泛查询
+
+### 常见场景处理指南
+
+根据工单描述的问题类型，采用不同的查询策略和处理流程：
+
+#### 场景1：登录失败/登录不成功
+
+**特征**：用户反馈无法登录、登录失败、登录报错等
+
+**⚠️ 关键原则**：即使工单中提供了 `user.id`，也应该**优先使用 `user.client_id`（设备ID）** 进行查询。因为登录失败意味着用户在该设备上未能成功认证，此时服务端日志中可能没有该 `user.id` 的登录记录。
+
+**为什么优先使用 client_id**：
+- 登录失败 = 认证未成功 = 服务端可能无法识别用户身份
+- 服务端日志中，登录失败的请求可能只记录了设备ID，没有用户ID
+- 用户提供的 `user.id` 是他们"想要"登录的账号，但在失败的请求中可能不存在
+
+**查询策略**：
+1. **优先使用 `user.client_id`** 查询登录相关接口的日志
+2. 查询登录相关接口（如 `/api/login`、`/api/auth`、`/api/oauth`、`/api/token` 等）
+3. 关注错误级别日志（`severity_text = 'ERROR'`）
+4. 提取登录失败的具体原因（密码错误、账号不存在、验证码错误、OAuth失败、Token过期等）
+5. 如果使用 client_id 无法定位，再尝试使用 user.id 查询（可能有部分日志记录了尝试登录的账号）
+
+**示例查询条件**：
+```
+# 优先使用 client_id
+filter.expression: "resource.service.name IN ('xxx-service') AND attribute.user.client_id = 'xxx' AND attribute.http.target CONTAINS 'login'"
+
+# 备选：使用 user.id（如果 client_id 无结果）
+filter.expression: "resource.service.name IN ('xxx-service') AND attribute.user.id = 123456 AND attribute.http.target CONTAINS 'login'"
+```
+
+#### 场景2：用户未登录/未认证访问
+
+**特征**：用户反馈功能无法使用，但用户当时未登录
+
+**处理流程**：
+1. 工单中没有 `user.id` → 优先获取 `user.client_id`
+2. 如果工单提供了邮箱/账号 → 先查询该账号的登录记录，获取关联的 `user.client_id`
+3. 使用 `user.client_id` 查询用户的操作日志
+
+#### 场景3：支付/交易失败
+
+**特征**：支付失败、扣款失败、订单创建失败等
+
+**查询策略**：
+1. 查询支付相关接口（`/api/payment`、`/api/order`、`/api/checkout` 等）
+2. 关注订单ID、交易ID等关键字段
+3. 查询第三方支付回调日志
+4. 检查是否有超时或网络错误
+
+#### 场景4：页面加载失败/白屏
+
+**特征**：页面打不开、白屏、加载超时等
+
+**查询策略**：
+1. 查询前端错误日志（如果有上报）
+2. 查询页面依赖的API接口调用
+3. 关注资源加载相关的日志
+4. 检查是否有CDN或静态资源问题
+
+#### 场景5：功能异常/数据错误
+
+**特征**：某功能不正常、数据显示错误、操作无响应等
+
+**查询策略**：
+1. 定位具体功能对应的后端接口
+2. 查询该接口的请求和响应日志
+3. 对比正常和异常情况下的数据差异
+4. 检查是否有业务逻辑错误
+
+#### 场景6：性能问题/响应慢
+
+**特征**：页面加载慢、接口响应慢、操作卡顿等
+
+**查询策略**：
+1. 查询接口响应时间（`duration_nano` 或类似字段）
+2. 使用 Traces 数据分析调用链路
+3. 定位耗时最长的服务或操作
+4. 检查是否有数据库慢查询
+
+#### 场景7：间歇性问题/偶发问题
+
+**特征**：问题偶尔出现、时好时坏、某些用户有问题某些没有
+
+**查询策略**：
+1. 扩大时间范围查询，收集多次问题出现的日志
+2. 对比正常和异常请求的差异
+3. 检查是否与特定条件相关（时间、地域、设备类型等）
+4. 分析是否为普遍性问题
 
 ### 时间范围计算优先级
 
@@ -448,73 +601,117 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
 
 ⚠️ **关键格式要求**：
 
-**🚨 快速参考：字段歧义处理（遇到警告时必看）**
+### 🚨🚨🚨 字段歧义处理（最重要！必须首先阅读）🚨🚨🚨
 
-如果查询结果中`rows`为`null`且出现以下警告，需要**同时**在`filter.expression`和`selectFields`中明确指定：
+**问题现象**：查询结果中`rows`为`null`，且`warnings`中出现类似以下警告：
+```
+"key user.id is ambiguous, found 3 different combinations of field context and data type:
+[name=user.id,context=attribute,type=string name=user.id,context=attribute,type=number name=user.id,context=attribute,type=bool]"
+```
 
-| 警告信息 | 解决方案 |
-|---------|---------|
-| `service.name is ambiguous, found 2 different combinations` | **方法1（推荐）**：在`filter.expression`中使用完整前缀：`resource.service.name IN ('cs.web.camscanner-toc')`<br>**方法2**：在`selectFields`中添加：`{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`<br>⚠️ **最佳实践**：两种方法同时使用 |
-| `user.id is ambiguous, found 3 different combinations` | **方法1（推荐）**：在`filter.expression`中使用完整前缀：`attribute.user.id = 1734170267`<br>**方法2**：在`selectFields`中添加：`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`<br>⚠️ **最佳实践**：两种方法同时使用 |
+**❌ 错误做法（只在selectFields中指定fieldContext，仍然会失败）**：
+```json
+{
+  "filter": {
+    "expression": "service.name IN ('cs.web.camscanner-toc') AND user.id = 1734170267"
+  },
+  "selectFields": [
+    {"name": "user.id", "fieldContext": "attribute", "fieldDataType": "number", ...}
+  ]
+}
+```
+⚠️ 上面这种写法是**错误的**！filter.expression中没有使用完整前缀，仍然会出现歧义警告！
 
-**重要规则**：
-1. ⚠️ **关键**：在`filter.expression`中使用的歧义字段，**必须使用完整前缀**（`resource.`或`attribute.`）来明确指定上下文
-2. 同时在`selectFields`中为所有歧义字段明确指定`fieldContext`和`fieldDataType`
-3. 如果查询结果中`rows`为`null`且出现字段歧义警告，这是导致查询失败的主要原因，必须立即修复
-4. **修复优先级**：
-   - **优先**：在`filter.expression`中使用完整前缀（如`resource.service.name`、`attribute.user.id`）
-   - **同时**：在`selectFields`中明确指定`fieldContext`和`fieldDataType`
+**✅ 正确做法（必须同时在filter.expression中使用完整前缀）**：
+```json
+{
+  "filter": {
+    "expression": "resource.service.name IN ('cs.web.camscanner-toc') AND attribute.user.id = 1734170267"
+  },
+  "selectFields": [
+    {"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"},
+    {"name": "user.id", "fieldContext": "attributes", "fieldDataType": "float64", "signal": "logs"}
+  ]
+}
+```
+
+**🔑 关键规则（必须同时满足）**：
+1. **filter.expression 中必须使用完整前缀**：
+   - `service.name` → `resource.service.name`
+   - `user.id` → `attribute.user.id`
+   - `user.client_id` → `attribute.user.client_id`
+2. **selectFields 中必须指定 fieldContext 和 fieldDataType**：
+   - `service.name`：`fieldContext: "resource"`, `fieldDataType: "string"`
+   - `user.id`：`fieldContext: "attributes"`, `fieldDataType: "float64"`（Number类型字段使用float64）
+
+**⚠️ 特别注意**：
+- `fieldContext` 的值：资源字段用 `"resource"`（单数），属性字段用 `"attributes"`（复数）
+- `fieldDataType` 的值：
+  - Number类型字段（如user.id、response.status）使用 `"float64"`
+  - String类型字段使用 `"string"`
+- 只在 selectFields 中指定是**不够的**，必须**同时**在 filter.expression 中使用完整前缀！
+
+---
+
+**常见歧义字段快速参考表**：
+
+| 字段 | filter.expression 中的写法 | selectFields 中的配置 |
+|------|---------------------------|----------------------|
+| `service.name` | `resource.service.name IN ('xxx')` | `{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}` |
+| `user.id` | `attribute.user.id = 1234567` | `{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "float64", "signal": "logs"}` |
+| `user.client_id` | `attribute.user.client_id = 'xxx'` | `{"name": "user.client_id", "fieldContext": "attributes", "fieldDataType": "string", "signal": "logs"}` |
+
+---
 
 1. **filter格式**：
    - ✅ 使用 `filter`（单数）和 `expression`（SQL-like字符串）
    - ❌ 不使用 `filters`（复数）和 `items` 数组格式
 
-2. **字段歧义处理**（重要！）：
-   - 对于有歧义的字段，**必须**在`filter.expression`中使用完整前缀，**同时**在`selectFields`中明确指定`fieldContext`和`fieldDataType`
+2. **字段歧义处理详细说明**：
+   - 对于有歧义的字段，**必须同时**：
+     1. 在`filter.expression`中使用完整前缀（`resource.`或`attribute.`）
+     2. 在`selectFields`中明确指定`fieldContext`和`fieldDataType`
    - **常见歧义字段**：
      - `service.name`：在resource和attribute上下文中都有string类型（通常使用resource上下文）
-     - `user.id`：在attributes上下文中有3种类型：string、bool、number（int64）（通常使用int64类型）
+     - `user.id`：在attributes上下文中有多种类型，实际使用**float64**类型（Number类型）
    - **警告示例**：
      ```
-     "key service.name is ambiguous, found 2 different combinations of field context and data type: 
+     "key service.name is ambiguous, found 2 different combinations of field context and data type:
      [name=service.name,context=resource,type=string name=service.name,context=attribute,type=string]"
-     
-     "key user.id is ambiguous, found 3 different combinations of field context and data type: 
+
+     "key user.id is ambiguous, found 3 different combinations of field context and data type:
      [name=user.id,context=attribute,type=number name=user.id,context=attribute,type=string name=user.id,context=attribute,type=bool]"
      ```
-   - **完整解决方案**（必须同时使用两种方法）：
-     - **方法1（推荐，必须）**：在`filter.expression`中使用完整前缀：
-       ```json
-       {
-         "filter": {
-           "expression": "resource.service.name IN ('cs.web.camscanner-toc') AND attribute.user.id = 1734170267"
+   - **完整解决方案示例**：
+     ```json
+     {
+       "filter": {
+         "expression": "resource.service.name IN ('cs.web.camscanner-toc') AND attribute.user.id = 1734170267"
+       },
+       "selectFields": [
+         {
+           "name": "service.name",
+           "fieldContext": "resource",
+           "fieldDataType": "string",
+           "signal": "logs"
+         },
+         {
+           "name": "user.id",
+           "fieldContext": "attributes",
+           "fieldDataType": "float64",
+           "signal": "logs"
+         },
+         {
+           "name": "body",
+           "fieldDataType": "string",
+           "signal": "logs"
          }
+       ],
+       "having": {
+         "expression": ""
        }
-       ```
-     - **方法2（同时使用）**：在`selectFields`中明确指定`fieldContext`和`fieldDataType`：
-       ```json
-       {
-         "selectFields": [
-           {
-             "name": "service.name",
-             "fieldContext": "resource",
-             "fieldDataType": "string",
-             "signal": "logs"
-           },
-           {
-             "name": "user.id",
-             "fieldContext": "attributes",
-             "fieldDataType": "int64",
-             "signal": "logs"
-           }
-         ]
-       }
-       ```
-     - **重要规则**：
-       - ⚠️ **关键**：在`filter.expression`中使用的歧义字段，**必须使用完整前缀**（`resource.service.name`、`attribute.user.id`）
-       - `service.name`：在filter中使用`resource.service.name`，在selectFields中使用`fieldContext: "resource"`
-       - `user.id`：在filter中使用`attribute.user.id`，在selectFields中使用`fieldContext: "attributes"`和`fieldDataType: "int64"`
-       - 如果查询结果中`rows`为`null`，很可能是字段歧义导致的，必须同时修复filter expression和selectFields
+     }
+     ```
 
 3. **fieldContext字段**：
    - 一般情况下：查询时不要添加`fieldContext`字段，SigNoz会自动识别
@@ -740,7 +937,7 @@ tags: ["ticket-analysis", "monitoring", "signoz", "error-analysis", "log-analysi
 
 1. **必须首先执行list_services**：获取服务列表，确认服务名称
 2. **服务名过滤**：在Query Builder中添加`service.name`过滤条件
-3. **字段类型匹配**：确保字段类型匹配（如`user.id`是int64类型，值也应该是数字）
+3. **字段类型匹配**：确保字段类型匹配（如`user.id`是Number/float64类型，值应该是数字）
 4. **时间范围验证**：自动调整未来时间和窄时间范围，最长不超过3天
 5. **优先级查询策略**：
    - 按时间优先级从高到低依次查询（明确说明的发生时间前后2小时 > 邮件中最早发送时间前后2小时 > 最近1天 > 其他时间点当天）
@@ -885,47 +1082,80 @@ SigNoz使用OpenTelemetry标准，将字段分为不同的上下文级别：
 - 实际数据结构中，服务信息存储在 `resources` 对象中（复数），不是 `resource`
 - 在Query Builder中使用时，直接使用 `service.name`，不需要 `resources.` 前缀
 
-#### 用户和设备字段（Attributes）
+#### 用户和设备字段（Attributes - Tag类型）
 
-| 字段名 | 数据类型 | 说明 | 使用场景 |
-|--------|---------|------|---------|
-| `user.id` | int64 | 用户ID | 用户过滤、查询 |
-| `user.client_id` | string | 客户端ID/设备ID | 设备过滤、查询 |
+| 字段名 | 数据类型 | fieldDataType | 说明 | 使用场景 |
+|--------|---------|---------------|------|---------|
+| `user.id` | Number | `float64` | 用户ID | 用户过滤、查询 |
+| `user.client_id` | String | `string` | 客户端ID/设备ID | 设备过滤、查询 |
 
 **重要说明**：
 - 字段名是 `user.id`（点分隔），不是 `user_id`
 - 字段名是 `user.client_id`（点分隔），不是 `client_id` 或 `device_id`
-- `user.id`字段类型是`int64`，值应该是数字，不需要引号
-- 这些字段位于`attributes`对象中，但在Query Builder中直接使用`user.id`即可
+- ⚠️ `user.id`字段在SigNoz中显示为**Number类型**，在selectFields中使用`fieldDataType: "float64"`
+- 这些字段位于`attributes`对象中，类型为`Tag`，在Query Builder中直接使用`user.id`即可
 
-#### 地理位置字段（Attributes）
+#### 地理位置字段（Attributes - Tag类型）
 
-| 字段名 | 数据类型 | 说明 | 使用场景 |
-|--------|---------|------|---------|
-| `geo.city_name` | string | 城市名称 | 地理位置过滤 |
-| `geo.country_name` | string | 国家名称 | 地理位置过滤 |
-| `geo.location.lat` | float | 纬度 | 地理位置查询 |
-| `geo.location.lon` | float | 经度 | 地理位置查询 |
+| 字段名 | 数据类型 | fieldDataType | 说明 | 使用场景 |
+|--------|---------|---------------|------|---------|
+| `geo.location.lat` | Number | `float64` | 纬度 | 地理位置查询 |
+| `geo.location.lon` | Number | `float64` | 经度 | 地理位置查询 |
+| `geo.city_name` | String | `string` | 城市名称 | 地理位置过滤 |
+| `geo.country_name` | String | `string` | 国家名称 | 地理位置过滤 |
+| `geo.country_iso_code` | String | `string` | 国家ISO代码 | 地理位置过滤（如CN、US） |
+| `geo.continent_code` | String | `string` | 大洲代码 | 地理位置过滤（如AS、EU） |
+| `geo.continent_name` | String | `string` | 大洲名称 | 地理位置过滤 |
+| `geo.timezone` | String | `string` | 时区 | 时区分析 |
 
-#### 请求日志字段（Attributes）
+#### 请求日志字段（Attributes - Tag类型）
 
-| 字段名 | 数据类型 | 说明 | 使用场景 |
-|--------|---------|------|---------|
-| `request.pathname` | string | 请求路径 | 接口路径查询 |
-| `request.host` | string | 请求域名 | 接口域名分析 |
-| `request.method` | string | 请求方法 | 方法过滤 |
-| `response.status` | int64 | 响应状态码 | 错误过滤（500/404等） |
-| `response.errno` | string | 业务错误码 | 业务错误分析 |
+| 字段名 | 数据类型 | fieldDataType | 说明 | 使用场景 |
+|--------|---------|---------------|------|---------|
+| `pathname` | String | `string` | 请求路径（简化） | 接口路径查询 |
+| `path` | String | `string` | 请求路径 | 接口路径查询 |
+| `request.pathname` | String | `string` | 请求路径（完整） | 接口路径查询 |
+| `request.host` | String | `string` | 请求域名 | 接口域名分析 |
+| `request.method` | String | `string` | 请求方法 | 方法过滤（GET/POST等） |
+| `request.query` | String | `string` | 请求查询参数 | 参数分析 |
+| `request.body` | String | `string` | 请求体 | 请求内容分析 |
+| `response.status` | Number | `float64` | 响应状态码 | 错误过滤（200/500/404等） |
+| `response.time` | Number | `float64` | 响应时间（秒） | 性能分析 |
+| `response.body` | String | `string` | 响应体 | 响应内容分析 |
+| `response.errno` | String | `string` | 业务错误码 | 业务错误分析 |
+| `referrer` | String | `string` | 来源页面 | 来源分析 |
 
-#### 错误日志字段（Attributes）
+#### 浏览器信息字段（Attributes - Tag类型）
 
-| 字段名 | 数据类型 | 说明 | 使用场景 |
-|--------|---------|------|---------|
-| `message` | string | 错误信息 | 错误内容查询 |
-| `name` | string | 错误类型 | 错误分类 |
-| `stack` | string | 错误堆栈 | 堆栈分析 |
-| `severity_text` | string | 日志严重程度文本 | 错误过滤 |
-| `severity_number` | int64 | 日志严重程度数字 | 错误过滤（17=ERROR, 18=FATAL等） |
+| 字段名 | 数据类型 | fieldDataType | 说明 | 使用场景 |
+|--------|---------|---------------|------|---------|
+| `browser.name` | String | `string` | 浏览器名称 | 浏览器过滤（Chrome/Safari等） |
+| `browser.version` | String | `string` | 浏览器版本 | 版本分析 |
+| `browser.user_agent` | String | `string` | 完整User Agent | UA分析 |
+
+#### 服务信息字段（Resource类型）
+
+| 字段名 | 类型 | 数据类型 | fieldDataType | 说明 | 使用场景 |
+|--------|------|---------|---------------|------|---------|
+| `service.name` | Resource | String | `string` | 服务名称 | 服务过滤 |
+| `service.version` | Resource | String | `string` | 服务版本 | 版本分析 |
+| `service.environment` | Resource | String | `string` | 运行环境 | 环境过滤（online/staging等） |
+
+#### 日志元数据字段
+
+| 字段名 | 数据类型 | fieldDataType | 说明 | 使用场景 |
+|--------|---------|---------------|------|---------|
+| `id` | String | `string` | 日志ID | 唯一标识 |
+| `timestamp` | - | - | 时间戳 | 时间范围查询 |
+| `body` | String | `string` | 日志内容 | 全文搜索 |
+| `severity_text` | String | `string` | 日志级别文本 | 错误过滤（ERROR/WARN等） |
+| `severity_number` | Number | `float64` | 日志级别数字 | 错误过滤（9=INFO, 17=ERROR等） |
+| `trace_id` | String | `string` | 追踪ID | 链路追踪 |
+| `span_id` | String | `string` | 跨度ID | 跨度关联 |
+| `trace_flags` | Number | `float64` | 追踪标志 | 追踪分析 |
+| `scope_name` | String | `string` | 作用域名称 | 来源分析 |
+| `scope_version` | String | `string` | 作用域版本 | 版本分析 |
+| `localTime` | String | `string` | 本地时间 | 时间分析 |
 
 #### 通用字段（Attributes）
 
@@ -956,7 +1186,7 @@ SigNoz使用OpenTelemetry标准，将字段分为不同的上下文级别：
 3. **selectFields格式**（有歧义时**必须**同时使用）：
    - 在`selectFields`中使用`fieldContext`字段：
      - `{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`
-     - `{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`
+     - `{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "float64", "signal": "logs"}`
 
 4. **嵌套字段**（重要）：
    - `user.id` - 嵌套在attributes.user对象下的id字段（不是user_id）
@@ -1035,7 +1265,7 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
     {
       "name": "user.id",
       "fieldContext": "attributes",
-      "fieldDataType": "int64",
+      "fieldDataType": "float64",
       "signal": "logs"
     }
   ]
@@ -1045,8 +1275,8 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 **注意**：
 - ⚠️ **关键**：在`filter.expression`中必须使用完整前缀：`attribute.user.id`（不是`user.id`）
 - 字段名是 `user.id`（点分隔），不是 `user_id`
-- user.id字段类型是int64，值应该是数字，不需要引号
-- ⚠️ **重要**：`user.id`字段有歧义，必须**同时**：1) 在filter.expression中使用`attribute.user.id`；2) 在selectFields中明确指定`fieldContext: "attributes"`和`fieldDataType: "int64"`
+- user.id字段类型是Number（float64），值应该是数字，不需要引号
+- ⚠️ **重要**：`user.id`字段有歧义，必须**同时**：1) 在filter.expression中使用`attribute.user.id`；2) 在selectFields中明确指定`fieldContext: "attributes"`和`fieldDataType: "float64"`
 
 #### 示例3：查询特定设备的日志
 
@@ -1118,7 +1348,7 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
     {
       "name": "user.id",
       "fieldContext": "attributes",
-      "fieldDataType": "int64",
+      "fieldDataType": "float64",
       "signal": "logs"
     },
     {
@@ -1138,7 +1368,7 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 
 **重要规则**：
 - `service.name`：使用`fieldContext: "resource"`（资源级别字段，描述服务本身）
-- `user.id`：使用`fieldContext: "attributes"`和`fieldDataType: "int64"`（根据实际数据结构）
+- `user.id`：使用`fieldContext: "attributes"`和`fieldDataType: "float64"`（根据实际数据结构）
 - **所有在filter expression中使用的歧义字段，都必须在selectFields中明确指定**
 - 如果查询结果中`rows`为`null`，很可能是字段歧义导致的，检查警告信息并在selectFields中明确指定所有歧义字段
 
@@ -1179,6 +1409,27 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 
 ### 普遍性问题分析
 
+#### 早期快速判断（在首次查询时执行）
+
+在首次查询时，可以通过以下特征**快速判断**是否可能是普遍性问题：
+
+**触发条件**（满足任一即触发）：
+- 工单中有多个用户报告同一问题
+- 工单来自客服/运营团队的批量反馈
+- 工单描述中包含"很多用户"、"大量"、"普遍"等关键词
+- 问题涉及核心功能（登录、支付、首页等）
+- 问题类型是已知的高风险类型（服务端500错误、数据库连接失败等）
+
+**快速判断查询**：
+```
+1. 执行广泛查询（不限定用户ID，仅限定服务名和时间范围）
+2. 统计错误数量和唯一用户/设备数
+3. 如果错误数 > 10 或唯一用户 > 3，标记为"疑似普遍性问题"
+4. 继续执行正常流程，但在分析阶段优先进行完整的普遍性分析
+```
+
+#### 完整分析流程（在综合分析阶段执行）
+
 **分析流程**：
 1. 提取关键特征（国家/地区、环境、服务版本、浏览器版本、错误类型、接口路径）
 2. 生成广泛查询（不限定用户ID和设备ID，扩展时间范围到前后24小时）
@@ -1190,6 +1441,24 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
    - 🟢 轻微（low）：影响超过10个错误或3个用户/设备
    - ✅ 孤立事件：影响范围有限
 5. 如果是普遍性问题，在解决方案中特别标注
+
+#### 普遍性问题的特殊处理
+
+如果确定是普遍性问题（级别 >= 中等）：
+
+1. **优先级提升**：将问题标记为高优先级
+2. **扩大查询范围**：
+   - 时间范围扩展到 24-72 小时
+   - 查询所有受影响的服务
+   - 统计各维度的影响分布（地区、设备类型、客户端版本等）
+3. **根因定位策略调整**：
+   - 重点关注服务端变更（最近的部署、配置变更）
+   - 检查是否有依赖服务故障
+   - 分析是否与特定版本/地区相关
+4. **文档标注**：
+   - 在 solution.md 中明确标注普遍性级别
+   - 提供影响范围的详细统计
+   - 建议是否需要紧急修复或回滚
 
 ## 关键信息识别流程
 
@@ -1222,6 +1491,183 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 3. 了解用户输入中可能出现的服务名称变体
 4. 生成service_name_mapping配置
 
+## 历史经验库规范
+
+历史经验库用于存储和检索已解决问题的经验，帮助快速定位和解决相似问题。
+
+### 存储位置
+
+```
+.online-ticket-analyzer/
+└── .production-history/
+    ├── index.json              # 经验索引文件
+    └── experiences/
+        ├── exp_001.json        # 单个经验记录
+        ├── exp_002.json
+        └── ...
+```
+
+### 经验记录格式
+
+每个经验记录（`exp_xxx.json`）包含以下字段：
+
+```json
+{
+  "id": "exp_001",
+  "created_at": "2025-01-20T10:00:00Z",
+  "updated_at": "2025-01-20T10:00:00Z",
+
+  "problem": {
+    "title": "登录失败 - OAuth认证超时",
+    "description": "用户反馈无法登录，点击登录按钮后长时间无响应",
+    "symptoms": ["登录失败", "OAuth超时", "无响应"],
+    "error_types": ["TimeoutError", "NetworkError"],
+    "error_codes": ["ERR_OAUTH_TIMEOUT"],
+    "affected_services": ["auth-service", "oauth-gateway"],
+    "affected_apis": ["/api/oauth/callback", "/api/auth/token"]
+  },
+
+  "root_cause": {
+    "category": "third_party_service",
+    "description": "第三方OAuth服务响应超时，导致认证流程阻塞",
+    "technical_details": "OAuth回调接口等待第三方响应超过30秒触发超时"
+  },
+
+  "solution": {
+    "summary": "增加OAuth超时时间并添加重试机制",
+    "steps": [
+      "1. 将OAuth超时时间从30秒增加到60秒",
+      "2. 添加自动重试机制（最多重试2次）",
+      "3. 添加友好的超时提示信息"
+    ],
+    "code_changes": ["auth-service/oauth.ts:L45-L60"],
+    "config_changes": ["增加OAUTH_TIMEOUT环境变量"]
+  },
+
+  "prevention": {
+    "measures": [
+      "添加第三方服务健康检查",
+      "配置超时告警"
+    ],
+    "monitoring": ["添加OAuth响应时间监控指标"]
+  },
+
+  "metadata": {
+    "ticket_id": "ticket_20250120_001",
+    "resolution_time_hours": 2,
+    "severity": "high",
+    "is_universal": false,
+    "tags": ["oauth", "timeout", "login", "third-party"]
+  }
+}
+```
+
+### 索引文件格式
+
+`index.json` 用于快速检索经验：
+
+```json
+{
+  "version": "1.0",
+  "last_updated": "2025-01-20T10:00:00Z",
+  "total_count": 10,
+
+  "by_error_type": {
+    "TimeoutError": ["exp_001", "exp_005"],
+    "NetworkError": ["exp_001", "exp_003"],
+    "AuthenticationError": ["exp_002", "exp_004"]
+  },
+
+  "by_service": {
+    "auth-service": ["exp_001", "exp_002"],
+    "payment-service": ["exp_003", "exp_004"]
+  },
+
+  "by_api": {
+    "/api/oauth/callback": ["exp_001"],
+    "/api/payment/create": ["exp_003"]
+  },
+
+  "by_symptom": {
+    "登录失败": ["exp_001", "exp_002"],
+    "支付失败": ["exp_003", "exp_004"]
+  },
+
+  "by_tag": {
+    "oauth": ["exp_001"],
+    "timeout": ["exp_001", "exp_005"],
+    "login": ["exp_001", "exp_002"]
+  }
+}
+```
+
+### 经验匹配规则
+
+按优先级从高到低匹配：
+
+1. **精确匹配**（权重：100）
+   - 错误码完全匹配（`error_codes`）
+   - API路径完全匹配（`affected_apis`）
+
+2. **高相关匹配**（权重：80）
+   - 错误类型匹配（`error_types`）
+   - 服务名称匹配（`affected_services`）
+
+3. **语义匹配**（权重：60）
+   - 症状关键词匹配（`symptoms`）
+   - 标签匹配（`tags`）
+
+4. **模糊匹配**（权重：40）
+   - 问题描述相似度
+   - 根本原因类别匹配
+
+**匹配算法**：
+```
+总分 = Σ(匹配项权重 × 匹配数量) / 最大可能分数 × 100
+
+如果总分 >= 60，认为是相关经验
+如果总分 >= 80，认为是高度相关经验
+```
+
+### 记录新经验
+
+在以下情况下应记录新经验：
+
+1. **问题已解决**：成功定位并解决了问题
+2. **新类型问题**：问题类型在历史经验库中不存在
+3. **有参考价值**：解决方案具有通用性，可能帮助解决类似问题
+
+**记录流程**：
+1. 从 `solution.md` 提取问题描述、根本原因、解决方案
+2. 提取关键特征：错误类型、错误码、服务名、API路径、症状关键词
+3. 生成唯一ID（`exp_xxx`）
+4. 创建经验记录文件
+5. 更新索引文件
+
+### 经验检索流程
+
+```
+1. 提取当前问题特征
+   ├─ 错误类型、错误码
+   ├─ 服务名称、API路径
+   └─ 症状关键词
+
+2. 检索匹配经验
+   ├─ 读取 index.json
+   ├─ 按各个维度查找相关经验ID
+   └─ 计算每个经验的匹配分数
+
+3. 返回相关经验
+   ├─ 按匹配分数排序
+   ├─ 返回分数 >= 60 的经验
+   └─ 最多返回 5 条最相关经验
+
+4. 应用经验
+   ├─ 参考历史解决方案
+   ├─ 验证是否适用于当前问题
+   └─ 根据实际情况调整
+```
+
 ## 迭代式查询
 
 ⚠️ **核心原则**：创建SigNoz查询并不一定一次生成完整的，而是可以根据查询的数据或其他信息补充后继续生成新的查询思路。相关流程符合日志查询定位的流程，最终目标是**定位到问题原因**。
@@ -1235,7 +1681,10 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 2. **结果分析**：分析查询结果，提取关键信息：
    - ⚠️ **首先检查查询是否成功**：
      - 如果`rows`为`null`，检查是否有字段歧义警告（`warnings`数组）
-     - 如果有字段歧义警告，必须修复：在`selectFields`中为所有歧义字段明确指定`fieldContext`和`fieldDataType`
+     - 如果有字段歧义警告，**必须同时执行两个修复步骤**：
+       1. **修改filter.expression**：使用完整前缀（`resource.service.name`、`attribute.user.id`）
+       2. **修改selectFields**：为所有歧义字段明确指定`fieldContext`和`fieldDataType`
+     - ⚠️ **只在selectFields中指定fieldContext是不够的**，必须同时在filter.expression中使用完整前缀！
      - 修复后重新执行查询
    - 如果查询成功，提取关键信息：
      - 错误信息：错误类型、错误消息、错误堆栈
@@ -1263,12 +1712,273 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 **关键特性**：
 - **动态查询生成**：查询不是一次性生成的，而是根据查询结果动态调整
 - **逐步深入定位**：从宽泛查询逐步细化到精确查询，最终定位到问题原因
-- **特征信息补充**：查询过程中特征信息会慢慢补充，用于生成更精确的查询
-  - 如果首次查询没有用户ID，可以根据设备ID等信息进行查询，然后从结果中提取用户ID
-  - 如果首次查询没有设备ID，可以根据用户ID等信息进行查询，然后从结果中提取设备ID
-  - 如果工单中没有提供用户信息或设备信息，先尝试通过工单中其他信息（接口路径、错误信息、关键词、时间范围等）+ 代码相关逻辑生成相关查询，从查询结果中提取用户ID或设备ID
-- **灵活调整策略**：如果某个查询方向无法定位问题，可以调整查询策略，尝试其他方向
-- **最终目标**：不是简单地获取数据，而是**定位到问题原因**
+
+## 多服务关联查询
+
+当问题涉及多个服务的调用链时，需要进行关联查询以追踪完整的请求路径。
+
+### 使用场景
+
+- 用户请求经过多个微服务处理
+- 错误可能发生在下游服务
+- 需要分析完整的请求链路
+- 性能问题需要定位耗时环节
+
+### 关联查询方法
+
+#### 方法1：使用 trace_id 追踪
+
+**适用场景**：日志中包含 `trace_id` 字段
+
+**查询步骤**：
+1. 从初始查询结果中提取 `trace_id`
+2. 使用 `trace_id` 查询所有相关服务的日志
+3. 按时间排序，分析请求流转过程
+
+**示例查询**：
+```json
+{
+  "filter": {
+    "expression": "attribute.trace_id = 'abc123xyz'"
+  },
+  "selectFields": [
+    {"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"},
+    {"name": "trace_id", "fieldContext": "attributes", "fieldDataType": "string", "signal": "logs"},
+    {"name": "span_id", "fieldContext": "attributes", "fieldDataType": "string", "signal": "logs"},
+    {"name": "timestamp", "fieldContext": "attributes", "fieldDataType": "float64", "signal": "logs"}
+  ],
+  "orderBy": {
+    "columnName": "timestamp",
+    "order": "asc"
+  }
+}
+```
+
+#### 方法2：使用 Traces 数据
+
+**适用场景**：SigNoz 中有完整的 Traces 数据
+
+**查询步骤**：
+1. 使用 `signoz_search_traces_by_service` 搜索相关追踪
+2. 使用 `signoz_get_trace_details` 获取追踪详情（包含所有 spans）
+3. 使用 `signoz_get_trace_span_hierarchy` 获取跨度层次结构
+4. 分析各服务的耗时和错误
+
+**示例流程**：
+```
+1. signoz_search_traces_by_service
+   - service: "frontend-service"
+   - timeRange: "4h"
+   - 过滤条件：hasError = true
+
+2. 获取 trace_id 后，执行 signoz_get_trace_details
+   - 返回完整的 span 列表
+
+3. 分析 span 层次结构
+   - frontend-service (200ms)
+     └─ api-gateway (180ms)
+        └─ auth-service (150ms) ❌ ERROR
+           └─ database (50ms)
+```
+
+#### 方法3：基于时间窗口关联
+
+**适用场景**：没有 trace_id，但知道请求的大致时间
+
+**查询步骤**：
+1. 确定请求的时间窗口（通常 ±1-2 秒）
+2. 查询该时间窗口内所有相关服务的日志
+3. 基于用户ID、请求路径、错误类型等进行关联
+
+**示例查询**：
+```json
+{
+  "filter": {
+    "expression": "resource.service.name IN ('service-a', 'service-b', 'service-c') AND attribute.user.id = 123456 AND timestamp >= 1705737600000 AND timestamp <= 1705737602000"
+  }
+}
+```
+
+### 服务调用链分析
+
+**分析步骤**：
+
+1. **绘制调用链**：
+   ```
+   用户请求 → 前端 → API网关 → 业务服务 → 数据库
+                         ↓
+                    认证服务
+   ```
+
+2. **定位故障点**：
+   - 从入口服务开始追踪
+   - 找到第一个出错的服务
+   - 分析错误原因
+
+3. **分析耗时分布**：
+   - 统计每个服务的处理时间
+   - 识别性能瓶颈
+
+4. **关联上下游**：
+   - 检查上游服务的请求是否正常
+   - 检查下游服务的响应是否正常
+
+### 常见的多服务问题模式
+
+| 模式 | 特征 | 分析方向 |
+|------|------|----------|
+| 网关超时 | API网关返回504，下游服务无响应 | 检查下游服务是否正常，网络是否通畅 |
+| 认证失败 | 业务服务收到401/403，认证服务报错 | 检查认证服务的日志，Token是否有效 |
+| 数据库连接 | 多个服务同时报数据库连接错误 | 检查数据库服务状态，连接池配置 |
+| 级联故障 | 一个服务故障导致多个上游服务报错 | 找到根源服务，分析故障原因 |
+| 配置不同步 | 部分服务使用旧配置 | 检查各服务的配置版本，是否需要重启 |
+
+## 错误处理与重试策略
+
+### 查询错误类型及处理
+
+| 错误类型 | 错误特征 | 处理策略 |
+|----------|----------|----------|
+| 超时错误 | `timeout`、`ETIMEDOUT` | 缩短时间范围为原来的一半，重试最多3次 |
+| 网络错误 | `ECONNREFUSED`、`ENOTFOUND` | 等待5秒后重试，最多重试3次 |
+| 限流错误 | `429`、`rate limit` | 等待30秒后重试，最多重试2次 |
+| 服务不可用 | `503`、`service unavailable` | 等待10秒后重试，最多重试3次 |
+| 字段歧义 | `ambiguous`、`rows: null` | 修复查询后立即重试（不计入重试次数） |
+| 权限错误 | `401`、`403` | 不重试，记录错误，提示检查配置 |
+| 参数错误 | `400`、`invalid parameter` | 不重试，修复参数后重新执行 |
+
+### 重试机制
+
+```
+重试流程：
+1. 捕获错误
+2. 判断错误类型
+3. 如果是可重试错误：
+   a. 检查重试次数是否超限
+   b. 执行等待策略（根据错误类型）
+   c. 调整查询参数（如缩短时间范围）
+   d. 重新执行查询
+4. 如果不可重试或重试超限：
+   a. 记录错误详情
+   b. 继续执行其他查询
+   c. 在结果中标注该查询失败
+```
+
+### 降级策略
+
+当查询持续失败时，执行降级策略：
+
+1. **缩小查询范围**：
+   - 时间范围：4h → 2h → 1h
+   - 返回条数：1000 → 500 → 100
+
+2. **简化查询条件**：
+   - 减少过滤条件
+   - 减少 selectFields 数量
+
+3. **切换查询方式**：
+   - `signoz_execute_builder_query` 失败 → 尝试 `signoz_search_logs_by_service`
+   - 复杂查询失败 → 尝试简单查询
+
+4. **标记并跳过**：
+   - 记录失败的查询
+   - 继续执行其他查询
+   - 在最终报告中说明哪些查询失败
+
+## 快速定位路径
+
+对于某些常见的错误类型，可以使用快速定位路径，跳过部分探索步骤直接定位问题。
+
+### 快速定位触发条件
+
+| 触发条件 | 快速路径 |
+|----------|----------|
+| 错误信息包含 "timeout" | 直接查询超时相关日志，分析网络/依赖服务 |
+| 错误码 500 | 直接查询服务端错误日志，分析堆栈 |
+| 错误码 401/403 | 直接查询认证服务日志 |
+| 错误码 404 | 检查路由配置，查询 API 网关日志 |
+| 错误信息包含 "database" | 直接查询数据库相关日志 |
+| 错误信息包含 "connection refused" | 检查服务健康状态，查询网络相关日志 |
+
+### 快速定位流程
+
+```
+1. 解析工单，提取关键信息
+   ↓
+2. 匹配快速定位规则
+   ├─ 匹配成功 → 执行快速路径
+   │   ├─ 直接执行针对性查询
+   │   ├─ 分析结果
+   │   └─ 如果定位到问题 → 生成解决方案
+   │   └─ 如果未定位 → 回退到标准流程
+   └─ 未匹配 → 执行标准流程
+```
+
+### 常见问题快速定位指南
+
+#### 1. 超时问题快速定位
+
+```
+1. 查询超时相关错误日志
+   filter: "severity_text = 'ERROR' AND body CONTAINS 'timeout'"
+
+2. 检查依赖服务响应时间
+   使用 Traces 分析各服务耗时
+
+3. 分析超时发生的时间模式
+   是否有规律性（如高峰期）
+
+4. 检查最近的配置变更
+   超时时间设置是否合理
+```
+
+#### 2. 认证失败快速定位
+
+```
+1. 查询认证服务错误日志
+   filter: "resource.service.name = 'auth-service' AND severity_text = 'ERROR'"
+
+2. 检查 Token 状态
+   是否过期、是否被撤销
+
+3. 检查用户状态
+   账号是否被禁用、权限是否变更
+
+4. 检查认证配置
+   OAuth 配置、密钥是否正确
+```
+
+#### 3. 数据库问题快速定位
+
+```
+1. 查询数据库相关错误日志
+   filter: "body CONTAINS 'database' OR body CONTAINS 'SQL'"
+
+2. 检查数据库连接状态
+   连接池是否耗尽
+
+3. 检查慢查询
+   是否有异常的长时间查询
+
+4. 检查数据库服务状态
+   CPU、内存、连接数等指标
+```
+
+#### 4. 网络问题快速定位
+
+```
+1. 查询网络相关错误日志
+   filter: "body CONTAINS 'ECONNREFUSED' OR body CONTAINS 'ETIMEDOUT'"
+
+2. 检查服务间通信状态
+   DNS 解析、端口连通性
+
+3. 检查负载均衡状态
+   是否有节点不可用
+
+4. 检查网络配置
+   防火墙、安全组规则
+```
 
 ## AI执行方式
 
@@ -1281,28 +1991,90 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 3. **提取关键信息** - 从输入中提取服务名、时间、用户信息等关键字段
 4. **确定分析路径** - 基于提取的信息，确定查询策略和分析方法
 
-### 第二步：规划执行
+### 第二步：规划执行（⚠️ 必须严格按顺序执行）
 
 在执行任务前，你应该：
 
-1. **检查配置** - 确认是否存在`.online-ticket-analyzer/project_context.json`和`.online-ticket-analyzer/signoz_config.json`
-   - 如果不存在，执行阶段0：首次使用检查
+**🔴 第一优先级：检查配置文件（必须首先执行！）**
+
+1. **检查配置文件是否存在**：
+   ```
+   检查1: .online-ticket-analyzer/project_context.json 是否存在？
+   检查2: .online-ticket-analyzer/signoz_config.json 是否存在？
+   ```
+
+   - **如果任一文件不存在**：
+     - ⚠️ **立即停止**，不要创建工单目录或ticket_info.json
+     - 必须先执行完整的阶段0流程
+     - 通读项目代码，生成 project_context.json
+     - 通读项目代码，生成 signoz_config.json
+     - 只有在两个配置文件都生成完成后，才能继续执行下一步
+
+   - **如果两个文件都存在**：继续执行下一步
+
+**🟡 第二优先级：创建工单信息（配置文件存在后才能执行）**
+
 2. **制定初始查询计划** - 根据提取的工单信息，制定初始的SigNoz查询计划
    - ⚠️ **重要**：查询计划不是一次性的，而是迭代式的
    - 先制定基础查询计划，后续根据查询结果动态调整
+
 3. **创建工单目录** - 在`.online-ticket-analyzer/tickets/`下创建工单子目录（格式：`ticket_YYYYMMDD_xxx`）
+
 4. **保存工单基本信息** - 创建`.online-ticket-analyzer/tickets/ticket_xxx/ticket_info.json`文件
    - ⚠️ **字段要求**：
      - **必须字段**：`ticket_id`（工单ID）、`problem`（问题描述）
      - **尽量要的字段**：`fid`（工单编号）、`user_id`（用户ID）、`account`（用户账号）、`service`（服务名称）、`platform`（平台信息）、`times`（时间信息数组）、`senders`（发送方信息数组）、`keywords`（关键词数组）、`hardware`（硬件信息数组）
      - **其他补充字段**：可根据工单实际情况添加，如：`priority`、`status`、`tags`、`attachments`等
+
 5. **生成初始MCP指令** - 创建`.online-ticket-analyzer/tickets/ticket_xxx/mcp_instructions.json`文件，包含初始查询指令
    - ⚠️ **重要**：初始查询指令不需要包含所有查询，可以根据查询结果动态补充
+
 6. **评估风险** - 识别潜在问题（时间范围、服务名称、字段歧义、时间戳单位等）
+
+**❌ 禁止行为**：
+- 在配置文件不存在的情况下创建 ticket_info.json
+- 在配置文件不存在的情况下生成 mcp_instructions.json
+- 跳过配置文件检查
 
 ### 第三步：执行查询
 
 在执行查询时，你应该：
+
+**🔴 前置检查：确认用户/设备标识**
+
+在开始执行查询之前，必须先确认有可用的用户或设备标识：
+
+1. **检查是否有 `user.id`**：
+   - 如果工单中提供了用户ID → 使用 `attribute.user.id` 进行查询
+   - 如果没有用户ID（用户未登录场景）→ 进入步骤2
+
+2. **尝试获取 `user.client_id`**（设备ID）：
+   - 检查工单中是否直接提供了设备ID/客户端ID
+   - 通过其他信息定位（IP、时间、接口、账号/邮箱等）生成查询，从结果中提取 `user.client_id`
+   - 使用 `attribute.user.client_id` 进行查询
+
+3. **⚠️ 无法获取任何标识时**：
+   - **必须立即停止查询流程**
+   - 生成 `preliminary_analysis.md`，告知用户无法定位用户/设备，请提供更多信息
+   - **不要继续执行无用户/设备标识的广泛查询**
+
+---
+
+**🔵 查询准备：确认服务和字段**
+
+在开始正式查询之前，先执行以下准备步骤：
+
+1. **确认服务存在**：
+   - 执行 `signoz_list_services`（使用 24h 或 7d 时间范围）
+   - 确认目标服务名称确实存在且有数据
+   - 如果服务不存在，检查 `signoz_config.json` 中的 `service_name_mapping`，尝试其他可能的服务名
+
+2. **查询可用字段**（可选但推荐）：
+   - 执行 `signoz_get_logs_field_values` 查询关键字段的实际值
+   - 特别是 `user.id`、`user.client_id` 等用户标识字段
+   - 了解字段的数据类型和上下文，避免后续查询时出现字段歧义
+
+---
 
 1. **按优先级执行查询**：
    - 按照时间优先级从高到低依次执行查询
@@ -1310,16 +2082,16 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
    - **优先级2**：邮件中最早发送时间前后2小时（如果优先级1所有查询都无结果或没有明确说明的发生时间）
    - **优先级3**：最近1天时间（如果优先级1和2所有查询都无结果）
    - **优先级4**：工单中其他提到的时间点当天（如果优先级1、2、3所有查询都无结果）
-   
+
    **每个时间区间内的完整查询流程**：
    - ⚠️ **重要**：每个时间区间内需要**完整地**根据工单信息查询相关的所有逻辑
-   - **查询顺序**（根据工单场景逐步扩展）：
-     1. **接口相关数据**：如果功能涉及到接口查询，先查该用户接口相关数据
-     2. **报错相关数据**：如果没有结果，查询该用户报错相关数据
-     3. **所有日志**：如果还是没有，查询该用户对应时间段所有日志
-     4. **其他相关数据**：根据不同场景，可能还需要查询其他相关数据（如设备信息、地理位置、浏览器版本等）
+   - **查询顺序**（针对用户反馈问题的最优顺序）：
+     1. **错误日志优先**：首先查询该用户/设备的错误级别日志（`severity_text = 'ERROR'`）
+     2. **相关接口数据**：查询与问题功能相关的接口日志
+     3. **全量日志**：如果前两步没有定位到问题，查询该用户/设备对应时间段所有日志
+     4. **扩展查询**：根据场景查询其他相关数据（设备信息、地理位置、关联服务等）
    - ⚠️ **关键逻辑**：必须执行完当前时间区间内的**所有查询**，不能因为某个查询为空就提前切换
-   
+
    **时间切换条件**：
    - 当前时间区间内**所有查询都执行完毕**，且**所有查询结果都无法定位到问题**（无数据或数据不相关），才切换到下一个时间优先级
    - ⚠️ **提前终止**：如果当前时间区间内**任意一个查询**查到符合要求的数据（**有数据并且相关数据能够定位到问题**），则**不再查询**后续时间优先级
@@ -1359,7 +2131,7 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
      - 然后重新执行查询
      - 常见字段歧义警告及修复：
        - `service.name`歧义：filter中使用`resource.service.name`，selectFields中添加`{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`
-       - `user.id`歧义：filter中使用`attribute.user.id`，selectFields中添加`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`
+       - `user.id`歧义：filter中使用`attribute.user.id`，selectFields中添加`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "float64", "signal": "logs"}`
    - ⚠️ **查询结果为空（rows 为 []）的处理**：
      - **诊断步骤**（按顺序执行）：
        1. **验证服务名称**：执行`signoz_list_services`确认服务名称是否正确
@@ -1436,6 +2208,210 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 2. **总结结果** - 清晰总结分析过程和关键发现
 3. **提供反馈** - 向用户说明分析结果，解释关键决策
 4. **记录经验** - 如有必要，将本次分析的经验记录到历史经验库
+
+## 文档模板
+
+### solution.md 模板（查询结果不为空时使用）
+
+```markdown
+# 工单分析报告
+
+## 基本信息
+
+| 项目 | 内容 |
+|------|------|
+| 工单ID | ticket_xxx |
+| 分析时间 | YYYY-MM-DD HH:MM:SS |
+| 问题类型 | [登录失败/支付失败/功能异常/性能问题/...] |
+| 严重程度 | [🔴 严重/🟠 高/🟡 中等/🟢 轻微] |
+| 是否普遍性问题 | [是/否] |
+
+## 问题概述
+
+[简要描述用户反馈的问题，包括时间、现象、影响范围]
+
+## 用户/设备信息
+
+| 项目 | 内容 |
+|------|------|
+| 用户ID | xxx |
+| 设备ID | xxx |
+| 地理位置 | xxx |
+| 浏览器/客户端 | xxx |
+
+## 查询过程
+
+### 执行的查询
+
+1. **查询1**：[查询描述]
+   - 时间范围：xxx - xxx
+   - 过滤条件：xxx
+   - 结果：[找到 N 条日志/无结果]
+
+2. **查询2**：[查询描述]
+   - ...
+
+### 关键发现
+
+- [发现1]
+- [发现2]
+- ...
+
+## 问题分析
+
+### 错误信息
+
+```
+[关键错误日志/堆栈信息]
+```
+
+### 根本原因
+
+**原因类别**：[代码Bug/配置错误/第三方服务/网络问题/用户操作/数据问题/...]
+
+**详细分析**：
+[详细说明问题的根本原因，包括技术细节]
+
+### 相关代码
+
+- 文件：`path/to/file.ts:L100-L120`
+- 问题代码段说明
+
+## 解决方案
+
+### 临时解决方案（如有）
+
+[如果有临时绕过问题的方法]
+
+### 根本解决方案
+
+1. [步骤1]
+2. [步骤2]
+3. ...
+
+### 代码修改建议
+
+```typescript
+// 修改前
+[原代码]
+
+// 修改后
+[修改后代码]
+```
+
+## 普遍性分析
+
+| 维度 | 统计 |
+|------|------|
+| 影响用户数 | N |
+| 影响设备数 | N |
+| 影响地区 | xxx |
+| 错误总数 | N |
+| 普遍性级别 | [🔴 严重/🟠 高/🟡 中等/🟢 轻微/✅ 孤立事件] |
+
+## 预防措施
+
+1. [措施1]
+2. [措施2]
+3. ...
+
+## 相关历史经验
+
+- [exp_xxx] [相关问题标题] - 相关度：xx%
+
+## 附录
+
+### 查询指令
+
+[mcp_instructions.json 的关键内容]
+
+### 原始数据摘要
+
+[analysis_summary.json 的关键统计]
+```
+
+### preliminary_analysis.md 模板（查询结果为空或无法定位时使用）
+
+```markdown
+# 初步分析报告
+
+## 基本信息
+
+| 项目 | 内容 |
+|------|------|
+| 工单ID | ticket_xxx |
+| 分析时间 | YYYY-MM-DD HH:MM:SS |
+| 分析状态 | ⚠️ 需要更多信息 |
+
+## 问题概述
+
+[简要描述用户反馈的问题]
+
+## 已执行的查询
+
+### 查询尝试
+
+1. **查询1**：[查询描述]
+   - 时间范围：xxx - xxx
+   - 过滤条件：xxx
+   - 结果：无数据
+   - 可能原因：[时间范围不匹配/服务名不正确/用户标识缺失/...]
+
+2. **查询2**：[查询描述]
+   - ...
+
+### 排查总结
+
+- ✅ 已确认服务 `xxx` 存在
+- ❌ 在指定时间范围内未找到该用户/设备的日志
+- ❓ 可能原因：[列出可能的原因]
+
+## 无法定位的原因
+
+[详细说明为什么无法定位到问题]
+
+可能的原因：
+1. **用户/设备信息缺失**：工单中未提供足够的用户或设备标识信息
+2. **时间范围不准确**：实际问题发生时间可能与工单描述的时间不一致
+3. **服务名称不匹配**：用户描述的服务可能与实际服务名不一致
+4. **日志未上报**：该场景可能没有相应的日志埋点
+5. **其他原因**：[...]
+
+## 需要的额外信息
+
+为了继续排查问题，请提供以下信息：
+
+### 必须提供（至少一项）
+
+- [ ] **用户ID**：用户的唯一标识
+- [ ] **设备ID/客户端ID**：设备的唯一标识（可在设置页面查看）
+- [ ] **账号/邮箱**：用户的登录账号
+
+### 建议提供
+
+- [ ] **准确的问题发生时间**：精确到分钟
+- [ ] **操作步骤**：问题发生前的具体操作步骤
+- [ ] **错误截图**：如果有错误提示，请提供截图
+- [ ] **网络环境**：WiFi/4G/5G，是否使用VPN
+- [ ] **设备信息**：手机型号、系统版本、App版本
+
+## 初步判断
+
+基于现有信息，初步判断可能是：
+
+1. [可能原因1] - 可能性：高/中/低
+2. [可能原因2] - 可能性：高/中/低
+
+## 建议的后续步骤
+
+1. [步骤1]
+2. [步骤2]
+3. 用户提供更多信息后，继续排查
+
+## 备注
+
+[其他需要说明的信息]
+```
 
 ## 配置选项
 
@@ -1524,7 +2500,7 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 | 问题 | 原因 | 解决方案 |
 |------|------|----------|
 | 查询结果为空 | 时间范围不正确、服务名称不匹配、字段歧义、时间戳单位错误 | 检查时间范围、确认服务名称、明确字段上下文、检查时间戳单位 |
-| 字段歧义错误 | 字段名在多个上下文中存在，导致rows为null | **必须同时使用两种方法**：1) 在filter.expression中使用完整前缀（resource.service.name、attribute.user.id）；2) 在selectFields中明确指定fieldContext和fieldDataType（service.name用resource，user.id用attributes+int64） |
+| 字段歧义错误 | 字段名在多个上下文中存在，导致rows为null | **必须同时使用两种方法**：1) 在filter.expression中使用完整前缀（resource.service.name、attribute.user.id）；2) 在selectFields中明确指定fieldContext和fieldDataType（service.name用resource，user.id用attributes+float64） |
 | rows为null | 字段歧义未处理，查询无法正确执行 | 检查警告信息，**必须同时修复**：1) filter.expression中使用完整前缀；2) selectFields中明确指定所有歧义字段 |
 | 服务名称不匹配 | 代码中的服务名与运行时不同 | 首先执行list_services确认实际服务名 |
 | 时间戳单位错误 | list_services需要纳秒，其他工具需要毫秒 | 使用timeRange参数（推荐），或确保时间戳单位正确 |
@@ -1537,7 +2513,10 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
 | 优先级查询策略 | 需要按优先级依次查询 | 每个时间区间内执行完整查询流程（接口相关 → 报错相关 → 所有日志 → 其他相关），所有查询都无法定位问题才切换，任意查询有相关数据能定位问题则提前终止 |
 | 时间切换逻辑错误 | 某个查询为空就切换时间区间 | 必须执行完当前时间区间内所有查询，且所有查询都无法定位到问题，才切换到下一个时间优先级 |
 | 数据判断错误 | 仅判断数据是否非空 | 必须判断数据是否相关和能够定位到问题，仅仅有数据还不够 |
-| 用户/设备信息缺失 | 工单中没有提供用户信息或设备信息 | 先尝试通过工单中其他信息（接口路径、错误信息、关键词、时间范围等）+ 代码相关逻辑生成相关查询，从查询结果中提取用户ID或设备ID；如果完全无法定位，则提示用户提供相关信息 |
+| 用户/设备信息缺失 | 工单中没有提供用户信息或设备信息 | 先尝试通过工单中其他信息（接口路径、错误信息、关键词、时间范围等）+ 代码相关逻辑生成相关查询，从查询结果中提取用户ID或设备ID；如果完全无法定位，则**停止流程**并提示用户提供相关信息 |
+| 用户未登录场景 | 用户反馈问题时未登录，没有user.id | **优先查询user.client_id（设备ID）**：1) 检查工单是否直接提供设备ID；2) 通过其他信息（IP、时间、接口等）定位；3) 通过账号/邮箱查登录记录获取设备ID。**如果都无法获取，必须停止流程**，生成preliminary_analysis.md请求用户提供更多信息 |
+| 登录失败场景 | 用户反馈登录失败/登录不成功 | **即使工单提供了user.id，也应优先使用user.client_id查询**。因为登录失败意味着未成功认证，服务端日志可能没有该user.id的记录。使用设备ID查询登录相关接口（/login、/auth等）的错误日志 |
+| 服务不存在 | signoz_list_services返回空或不包含目标服务 | 1) 扩大时间范围（7d或30d）重新查询；2) 检查signoz_config.json中的service_name_mapping；3) 尝试模糊匹配服务名 |
 
 ### 调试模式
 
@@ -1564,7 +2543,7 @@ OpenTelemetry标准的严重程度数字（用于`severity_number`字段）：
        - `user.id` → 改为 `attribute.user.id`
      - **方法2（同时使用）**：在`selectFields`中为所有歧义字段明确指定`fieldContext`和`fieldDataType`：
        - `service.name`：添加`{"name": "service.name", "fieldContext": "resource", "fieldDataType": "string", "signal": "logs"}`
-       - `user.id`：添加`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "int64", "signal": "logs"}`（虽然警告中显示有string、bool、number三种类型，但通常使用number/int64类型）
+       - `user.id`：添加`{"name": "user.id", "fieldContext": "attributes", "fieldDataType": "float64", "signal": "logs"}`（虽然警告中显示有string、bool、number三种类型，但通常使用float64类型）
    - ⚠️ **重要**：仅仅在`selectFields`中指定是不够的，**必须同时在`filter.expression`中使用完整前缀**（`resource.`或`attribute.`）！
 6. **查看分析摘要** - 检查`.online-ticket-analyzer/tickets/ticket_xxx/analysis_summary.json`中的本地分析摘要
 7. **分析错误信息** - 从错误信息中提取线索，调整查询策略
